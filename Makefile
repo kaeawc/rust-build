@@ -1,5 +1,5 @@
 # Fast paths for the inner loop. Everything is plain cargo underneath.
-.PHONY: check test lint fmt ci watch run serve serve-tls desktop desktop-test desktop-snap dist docker tools
+.PHONY: check test lint fmt ci watch run serve serve-tls desktop desktop-test desktop-snap dist docker docker-dev tools
 
 check:            ## type-check everything (no codegen, no link): the inner loop
 	cargo check --all-targets
@@ -36,8 +36,11 @@ desktop-snap:     ## render the desktop app headless to panel.png
 dist:             ## smallest, fastest binary (thin LTO, 1 CGU)
 	cargo build --profile dist -p rb
 
-docker:
+docker:           ## shipping image (thin LTO)
 	docker build -f ci/Dockerfile -t rust-build:latest .
+
+docker-dev:       ## quick local image (release profile, incremental)
+	docker build -f ci/Dockerfile --build-arg PROFILE=release -t rust-build:dev .
 
 tools:            ## optional dev tools, as prebuilt binaries
 	@command -v cargo-binstall >/dev/null || curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
