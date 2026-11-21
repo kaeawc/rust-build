@@ -14,6 +14,12 @@ path = "src/main.rs"
 [features]
 # OpenTelemetry trace export + propagation (`--otlp-endpoint`).
 otel = ["rb-telemetry/otel", "rb-server/otel", "rb-client/otel"]
+# Postgres user store, migrations and job store (`--database-url`).
+postgres = ["rb-db/postgres", "rb-jobs/postgres", "rb-server/postgres"]
+# Valkey response cache (`--valkey-url`).
+valkey = ["rb-db/valkey", "rb-server/valkey"]
+# Everything (what releases and the Docker image ship).
+full = ["otel", "postgres", "valkey"]
 
 [lints]
 workspace = true
@@ -26,6 +32,8 @@ futures-util.workspace = true
 http.workspace = true
 rb-client.workspace = true
 rb-core.workspace = true
+rb-db.workspace = true
+rb-jobs.workspace = true
 rb-server.workspace = true
 rb-tls.workspace = true
 rb-tokens.workspace = true

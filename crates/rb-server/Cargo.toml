@@ -15,6 +15,8 @@ workspace = true
 
 [features]
 otel = ["rb-telemetry/otel"]
+postgres = ["rb-db/postgres", "rb-jobs/postgres"]
+valkey = ["rb-db/valkey"]
 
 [dependencies]
 axum.workspace = true
@@ -23,6 +25,8 @@ http.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 rb-core.workspace = true
+rb-db.workspace = true
+rb-jobs.workspace = true
 rb-telemetry.workspace = true
 rb-tls.workspace = true
 rb-tokens.workspace = true

@@ -1,5 +1,6 @@
 //! `rb` — one binary for every non-GUI face of rust-build.
 
+mod backend;
 mod cmd;
 mod tlsargs;
 
@@ -42,6 +43,19 @@ enum Command {
     Token(cmd::token::Command),
     /// Write a `.env` for the server from a preset (headless onboarding).
     Env(cmd::env::Args),
+    /// Schema migrations (golang-migrate compatible; `--fake` needs no database).
+    Migrate(cmd::migrate::Args),
+    /// Background jobs: enqueue, counts, run workers.
+    #[command(subcommand)]
+    Jobs(cmd::jobs::Command),
+    /// Inspect a running deployment: users, health, traffic, status.
+    Admin(cmd::admin::Args),
+    /// Local stack via docker compose: up, down, ps, logs, env.
+    Devup(cmd::devup::Args),
+    /// Generate a crate, an `rb` subcommand, or a server handler.
+    Scaffold(cmd::scaffold::Args),
+    /// Event-bus demo: synthetic producers with a live counter report.
+    Inspect(cmd::inspect::Args),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -54,12 +68,14 @@ fn main() -> anyhow::Result<()> {
     };
 
     // Synchronous commands skip building a runtime entirely (and never export traces).
-    if matches!(cli.command, Command::Cert(_) | Command::Token(_) | Command::Env(_)) {
+    if matches!(cli.command, Command::Cert(_) | Command::Token(_) | Command::Env(_) | Command::Devup(_) | Command::Scaffold(_)) {
         let _guard = rb_telemetry::init(&rb_telemetry::Config { otlp_endpoint: None, ..telemetry })?;
         return match cli.command {
             Command::Cert(a) => cmd::cert::run(a),
             Command::Token(c) => cmd::token::run(c),
             Command::Env(a) => cmd::env::run(a),
+            Command::Devup(a) => cmd::devup::run(a),
+            Command::Scaffold(a) => cmd::scaffold::run(a),
             _ => unreachable!("matched above"),
         };
     }
@@ -74,7 +90,13 @@ fn main() -> anyhow::Result<()> {
             Command::Ws(a) => cmd::ws::run(a).await,
             Command::Loadgen(a) => cmd::loadgen::run(a).await,
             Command::Tunnel(c) => cmd::tunnel::run(c).await,
-            Command::Cert(_) | Command::Token(_) | Command::Env(_) => unreachable!("handled above"),
+            Command::Migrate(a) => cmd::migrate::run(a).await,
+            Command::Jobs(c) => cmd::jobs::run(c).await,
+            Command::Admin(a) => cmd::admin::run(a).await,
+            Command::Inspect(a) => cmd::inspect::run(a).await,
+            Command::Cert(_) | Command::Token(_) | Command::Env(_) | Command::Devup(_) | Command::Scaffold(_) => {
+                unreachable!("handled above")
+            }
         }
     })
 }

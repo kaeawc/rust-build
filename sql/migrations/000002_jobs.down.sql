@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS rb_periodic;
+DROP TABLE IF EXISTS rb_job;

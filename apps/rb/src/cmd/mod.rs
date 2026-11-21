@@ -1,7 +1,13 @@
+pub mod admin;
 pub mod cert;
+pub mod devup;
 pub mod env;
 pub mod get;
+pub mod inspect;
+pub mod jobs;
 pub mod loadgen;
+pub mod migrate;
+pub mod scaffold;
 pub mod serve;
 pub mod token;
 pub mod tunnel;

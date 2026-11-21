@@ -1,9 +1,9 @@
 use crate::health::{Probe, ProbeFuture, ProbeResult, run_all};
 use crate::store::{MemoryStore, UserStore};
 use crate::traffic::TrafficRecorder;
+use rb_core::cache::{Cache, MemoryCache};
 use rb_core::clock::{SharedClock, System};
 use rb_core::idgen::{IdGen, Random};
-use rb_core::kv::Memory;
 use rb_telemetry::metrics::Metrics;
 use rb_tokens::Hmac256;
 use std::sync::Arc;
@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 
 pub struct Config {
     pub store: Arc<dyn UserStore>,
+    /// Response cache; `None` uses an in-process [`MemoryCache`].
+    pub cache: Option<Arc<dyn Cache>>,
     pub clock: SharedClock,
     pub ids: Arc<dyn IdGen>,
     pub token_secret: Vec<u8>,
@@ -25,12 +27,15 @@ pub struct Config {
     pub probes: Vec<Arc<dyn Probe>>,
     /// Prometheus registry served at `/metrics`; share it to add process-wide metrics.
     pub metrics: Arc<Metrics>,
+    /// Background jobs: when set, creating a user enqueues a `user_created` job.
+    pub jobs: Option<rb_jobs::Client>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             store: Arc::new(MemoryStore::seeded(&["Ada", "Grace", "Linus", "Barbara", "Ken"])),
+            cache: None,
             clock: Arc::new(System),
             ids: Arc::new(Random::default()),
             token_secret: b"dev-secret-change-me".to_vec(),
@@ -40,6 +45,7 @@ impl Default for Config {
             request_timeout: Duration::from_secs(10),
             probes: Vec::new(),
             metrics: Arc::new(Metrics::new("rb", env!("CARGO_PKG_VERSION"))),
+            jobs: None,
         }
     }
 }
@@ -50,13 +56,14 @@ pub struct AppState(pub(crate) Arc<Inner>);
 
 pub(crate) struct Inner {
     pub store: Arc<dyn UserStore>,
-    pub cache: Arc<Memory<String>>,
+    pub cache: Arc<dyn Cache>,
     pub traffic: TrafficRecorder,
     pub tokens: Hmac256,
     pub clock: SharedClock,
     pub ids: Arc<dyn IdGen>,
     pub probes: Vec<Arc<dyn Probe>>,
     pub metrics: Arc<Metrics>,
+    pub jobs: Option<rb_jobs::Client>,
     pub started: Instant,
     pub shutting_down: AtomicBool,
     pub health: std::sync::Mutex<Option<(Instant, bool)>>,
@@ -81,22 +88,20 @@ impl Probe for StoreProbe {
     }
 }
 
-struct CacheProbe(Arc<Memory<String>>);
+struct CacheProbe(Arc<dyn Cache>);
 
 impl Probe for CacheProbe {
     fn name(&self) -> &str {
         "cache"
     }
     fn check(&self) -> ProbeFuture<'_> {
-        self.0.set("_probe", "ok".into(), Some(Duration::from_secs(1)));
-        let r = if self.0.get("_probe").is_some() { Ok(()) } else { Err("cache read-back failed".into()) };
-        Box::pin(std::future::ready(r))
+        Box::pin(async move { self.0.ping().await.map_err(|e| e.0) })
     }
 }
 
 impl AppState {
     pub fn new(cfg: Config) -> Self {
-        let cache = Arc::new(Memory::new(cfg.clock.clone()));
+        let cache = cfg.cache.unwrap_or_else(|| Arc::new(MemoryCache::new(cfg.clock.clone())));
         let mut probes: Vec<Arc<dyn Probe>> = vec![Arc::new(StoreProbe(cfg.store.clone())), Arc::new(CacheProbe(cache.clone()))];
         probes.extend(cfg.probes);
         AppState(Arc::new(Inner {
@@ -109,6 +114,7 @@ impl AppState {
             ids: cfg.ids,
             probes,
             metrics: cfg.metrics,
+            jobs: cfg.jobs,
             shutting_down: AtomicBool::new(false),
             health: std::sync::Mutex::new(None),
             cfg: Timeouts {

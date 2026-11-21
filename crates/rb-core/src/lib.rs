@@ -3,6 +3,7 @@
 //! Everything that reads time takes a [`clock::Clock`] so tests drive it with [`clock::Fake`]
 //! instead of sleeping. Nothing here depends on an async runtime.
 
+pub mod cache;
 pub mod circuitbreaker;
 pub mod clock;
 pub mod eventbus;

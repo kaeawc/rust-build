@@ -3185,6 +3185,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rb-db"
+version = "0.1.0"
+dependencies = [
+ "rb-core",
+ "rb-tls",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rb-desktop"
 version = "0.1.0"
 dependencies = [
@@ -3199,6 +3210,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rb-jobs"
+version = "0.1.0"
+dependencies = [
+ "rb-core",
+ "rb-db",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rb-server"
 version = "0.1.0"
 dependencies = [
@@ -3208,6 +3233,8 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rb-core",
+ "rb-db",
+ "rb-jobs",
  "rb-telemetry",
  "rb-tls",
  "rb-tokens",

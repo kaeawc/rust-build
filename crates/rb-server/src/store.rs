@@ -3,11 +3,9 @@
 
 use rb_core::clock::lock;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Mutex;
 
-pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub use rb_core::cache::BoxFut;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct User {
@@ -65,5 +63,47 @@ impl UserStore for MemoryStore {
 
     fn ping(&self) -> BoxFut<'_, Result<(), StoreError>> {
         Box::pin(std::future::ready(Ok(())))
+    }
+}
+
+/// Users in Postgres (feature `postgres`), mirroring the sqlc queries in `sql/queries/users.sql`.
+#[cfg(feature = "postgres")]
+pub struct PgUserStore(pub rb_db::pg::Pool);
+
+#[cfg(feature = "postgres")]
+impl PgUserStore {
+    async fn client(&self) -> Result<rb_db::pg::PooledClient, StoreError> {
+        self.0.get().await.map_err(|e| StoreError(e.to_string()))
+    }
+}
+
+#[cfg(feature = "postgres")]
+fn pg_err(e: rb_db::pg::tokio_postgres::Error) -> StoreError {
+    StoreError(e.to_string())
+}
+
+#[cfg(feature = "postgres")]
+impl UserStore for PgUserStore {
+    fn list(&self, after: Option<i64>, limit: usize) -> BoxFut<'_, Result<Vec<User>, StoreError>> {
+        Box::pin(async move {
+            let c = self.client().await?;
+            let stmt = c.prepare_cached("SELECT id, name FROM users WHERE id > $1 ORDER BY id LIMIT $2").await.map_err(pg_err)?;
+            let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+            let rows = c.query(&stmt, &[&after.unwrap_or(0), &limit]).await.map_err(pg_err)?;
+            Ok(rows.iter().map(|r| User { id: r.get(0), name: r.get(1) }).collect())
+        })
+    }
+
+    fn create(&self, user: NewUser) -> BoxFut<'_, Result<User, StoreError>> {
+        Box::pin(async move {
+            let c = self.client().await?;
+            let stmt = c.prepare_cached("INSERT INTO users (name) VALUES ($1) RETURNING id, name").await.map_err(pg_err)?;
+            let r = c.query_one(&stmt, &[&user.name]).await.map_err(pg_err)?;
+            Ok(User { id: r.get(0), name: r.get(1) })
+        })
+    }
+
+    fn ping(&self) -> BoxFut<'_, Result<(), StoreError>> {
+        Box::pin(async move { rb_db::pg::ping(&self.0).await.map_err(|e| StoreError(e.to_string())) })
     }
 }

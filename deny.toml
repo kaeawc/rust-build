@@ -31,6 +31,10 @@ allow = [
     "Unicode-3.0",
     "Zlib",
 ]
+exceptions = [
+    # Mandatory dependency of redis (feature `valkey`); BSL-1.0 is OSI-approved and permissive.
+    { crate = "xxhash-rust", allow = ["BSL-1.0"] },
+]
 
 [bans]
 # One version of every crate. A second copy of a crate means compiling it (and usually its whole
@@ -53,6 +57,13 @@ skip = [
     { crate = "base64@0.22", reason = "axum 0.8 uses 0.22; rcgen's pem uses 0.23" },
     { crate = "getrandom@0.2", reason = "ring 0.17 uses 0.2" },
     { crate = "getrandom@0.3", reason = "rand_core 0.9 (tungstenite via axum) uses 0.3" },
+    # Remove these six when axum moves to tokio-tungstenite >= 0.30 (sha1 0.11 / rand 0.10).
+    { crate = "digest@0.10", reason = "axum 0.8 / tungstenite 0.29 use sha1 0.10; postgres-protocol uses digest 0.11 (feature postgres)" },
+    { crate = "block-buffer@0.10", reason = "same as digest@0.10" },
+    { crate = "crypto-common@0.1", reason = "same as digest@0.10" },
+    { crate = "cpufeatures@0.2", reason = "same as digest@0.10" },
+    { crate = "rand@0.9", reason = "tungstenite 0.29 (axum 0.8) uses 0.9; tokio-postgres 0.7.18 uses 0.10 (older versions have RustSec advisories)" },
+    { crate = "rand_core@0.9", reason = "same as rand@0.9" },
     { crate = "syn@2", reason = "proc-macro ecosystem mid-migration to syn 3 (serde/clap on 3; tokio-macros, thiserror, tracing on 2)" },
 ]
 

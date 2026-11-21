@@ -1,0 +1,27 @@
+[package]
+name = "rb-jobs"
+description = "Background jobs: retries with backoff, scheduling, uniqueness, periodic jobs, rescue. Postgres (SKIP LOCKED + LISTEN/NOTIFY) or in-memory."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[features]
+postgres = ["rb-db/postgres"]
+
+[dependencies]
+rb-core.workspace = true
+rb-db.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

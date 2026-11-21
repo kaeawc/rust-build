@@ -23,6 +23,8 @@ rb-server = { path = "crates/rb-server" }
 rb-client = { path = "crates/rb-client" }
 rb-tunnel = { path = "crates/rb-tunnel" }
 rb-telemetry = { path = "crates/rb-telemetry" }
+rb-db = { path = "crates/rb-db" }
+rb-jobs = { path = "crates/rb-jobs" }
 
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "query", "tokio", "ws", "matched-path"] }
@@ -51,6 +53,12 @@ tower-http = { version = "0.7", default-features = false, features = ["catch-pan
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi", "std", "json", "registry"] }
 prometheus-client = "0.26"
+# Database backends: only compiled with the `postgres` / `valkey` features.
+tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime", "with-serde_json-1"] }
+deadpool-postgres = { version = "0.14.2", default-features = false, features = ["rt_tokio_1"] }
+crc32fast = "1"
+# TLS via rustls with no provider feature: rb-db installs ring as the process default.
+redis = { version = "1.8.2", default-features = false, features = ["tokio-rustls-comp", "connection-manager"] }
 # OpenTelemetry: only compiled with the `otel` feature (OTLP over HTTP via hyper; no tonic, no reqwest).
 opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime"] }

@@ -22,6 +22,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
+const USERS_GEN: &str = "users:gen";
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 /// Builds the full application router.
@@ -154,14 +155,18 @@ async fn list_users(State(s): State<AppState>, Query(q): Query<ListQuery>) -> Re
         Some(c) => Some(paginator::decode::<i64>(c).map_err(|e| ApiError::bad_request(e.to_string()))?),
         None => None,
     };
-    let key = format!("users:{size}:{after:?}");
-    if let Some(body) = s.0.cache.get(&key) {
+    // Generation-keyed: a write bumps `users:gen`, so older pages are simply never read again.
+    let generation = s.0.cache.get(USERS_GEN).await.ok().flatten().unwrap_or_default();
+    let key = format!("users:{generation}:{size}:{after:?}");
+    if let Ok(Some(body)) = s.0.cache.get(&key).await {
         return Ok(([(header::CONTENT_TYPE, "application/json")], [(HeaderName::from_static("x-cache"), "hit")], body).into_response());
     }
     let rows = s.0.store.list(after, size + 1).await.map_err(|e| ApiError::internal(e.0))?;
     let page = Page::from_fetch(rows, size, |u: &User| paginator::encode(&u.id));
     let body = serde_json::to_string(&page).map_err(|e| ApiError::internal(e.to_string()))?;
-    s.0.cache.set(key, body.clone(), Some(s.0.cfg.users_cache_ttl));
+    if let Err(e) = s.0.cache.set(&key, body.clone(), Some(s.0.cfg.users_cache_ttl)).await {
+        tracing::warn!(error = %e, "cache write failed");
+    }
     Ok(([(header::CONTENT_TYPE, "application/json")], [(HeaderName::from_static("x-cache"), "miss")], body).into_response())
 }
 
@@ -171,8 +176,15 @@ async fn create_user(State(s): State<AppState>, Json(new): Json<NewUser>) -> Res
         return Err(ApiError::bad_request("name must be 1-100 characters"));
     }
     let user = s.0.store.create(NewUser { name: name.to_string() }).await.map_err(|e| ApiError::internal(e.0))?;
-    // Cheap and correct: any write invalidates every cached page.
-    s.0.cache.sweep_prefix("users:");
+    if let Some(jobs) = &s.0.jobs
+        && let Err(e) = jobs.insert(&crate::UserCreated { user_id: user.id, name: user.name.clone() }).await
+    {
+        tracing::warn!(error = %e, user_id = user.id, "enqueueing user_created failed");
+    }
+    // Any write invalidates every cached page.
+    if let Err(e) = s.0.cache.incr(USERS_GEN).await {
+        tracing::warn!(error = %e, "cache invalidation failed");
+    }
     Ok((StatusCode::CREATED, Json(user)))
 }
 

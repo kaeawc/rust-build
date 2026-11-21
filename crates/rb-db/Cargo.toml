@@ -1,0 +1,31 @@
+[package]
+name = "rb-db"
+description = "Postgres (tokio-postgres + deadpool, rustls/ring TLS), golang-migrate-compatible migrations, Valkey cache."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[features]
+# Off by default: the migration list, Migrator trait and fakes build without any database crate.
+postgres = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:crc32fast", "dep:tokio-rustls"]
+valkey = ["dep:redis"]
+
+[dependencies]
+rb-core.workspace = true
+rb-tls.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+crc32fast = { workspace = true, optional = true }
+deadpool-postgres = { workspace = true, optional = true }
+redis = { workspace = true, optional = true }
+tokio-postgres = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
