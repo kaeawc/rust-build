@@ -13,7 +13,8 @@ Rust port of golang-build: API server, CLI clients, TLS tunnel, and a Rune deskt
 - Keep integration tests in `apps/rb/tests/e2e.rs` (one binary). Prefer unit tests in-module.
 - Doctests are disabled; don't rely on them for coverage.
 - `desktop/` is a separate workspace. Bump the Rune `rev` and every `[patch.crates-io]` entry
-  together.
+  together. After changing root dependencies, run `cd desktop && cargo check` and commit
+  `desktop/Cargo.lock`.
 
 ## Build & validate
 

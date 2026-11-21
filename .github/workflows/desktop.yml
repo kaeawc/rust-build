@@ -19,6 +19,8 @@ on:
     paths:
       - "desktop/**"
       - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
 
@@ -53,10 +55,12 @@ jobs:
           shared-key: desktop-macos
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --locked --all-targets --profile ci -- -D warnings
+      # No --locked: root dependency bumps (Dependabot) change what the shared path crates need,
+      # and desktop/Cargo.lock can't be updated by those PRs. Rune itself stays pinned by rev.
+      - run: cargo clippy --all-targets --profile ci -- -D warnings
       # Headless layout + input tests, plus backend tests against an embedded server.
-      - run: cargo test --locked --profile ci
-      - run: cargo build --locked --release
+      - run: cargo test --profile ci
+      - run: cargo build --release
       - uses: actions/upload-artifact@v7
         with:
           name: rb-desktop-macos
