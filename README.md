@@ -118,7 +118,7 @@ Not ported (yet): Postgres/Valkey backends, migrations, River jobs, the web SPA.
 - Only collaborators can open issues and pull requests (interaction limit; GitHub caps it at six
   months, so it needs renewing — currently until 2027-05-21).
 - `main` can't be deleted, force-pushed, or given merge commits. Pull requests need CI (`fmt`,
-  `lint`, `test`, `build`) green and squash-merge; repository admins may push directly. Tags are
+  `lint`, `deny`, `test`, `build`) green and squash-merge; repository admins may push directly. Tags are
   immutable.
 - Actions: only GitHub-owned actions plus `Swatinem/rust-cache` and `taiki-e/install-action`,
   all pinned to commit SHAs (Dependabot updates the pins); the workflow token is read-only;
