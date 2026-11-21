@@ -13,6 +13,9 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+otel = ["rb-telemetry/otel"]
+
 [dependencies]
 bytes.workspace = true
 futures-util.workspace = true
@@ -21,6 +24,7 @@ http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 rb-core.workspace = true
+rb-telemetry.workspace = true
 rb-tls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -29,3 +33,4 @@ tokio.workspace = true
 tokio-rustls.workspace = true
 tokio-tungstenite.workspace = true
 tower.workspace = true
+tracing.workspace = true

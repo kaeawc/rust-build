@@ -1,0 +1,30 @@
+[package]
+name = "rb-telemetry"
+description = "Logging (text/JSON), Prometheus metrics, and optional OpenTelemetry tracing (feature `otel`)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[features]
+# OTLP trace export + W3C traceparent propagation. Off by default: it adds prost and the OTel SDK.
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-http", "dep:tracing-opentelemetry"]
+
+[dependencies]
+http.workspace = true
+prometheus-client.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-http = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }

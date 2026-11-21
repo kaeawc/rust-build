@@ -13,6 +13,9 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+otel = ["rb-telemetry/otel"]
+
 [dependencies]
 axum.workspace = true
 futures-util.workspace = true
@@ -20,6 +23,7 @@ http.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 rb-core.workspace = true
+rb-telemetry.workspace = true
 rb-tls.workspace = true
 rb-tokens.workspace = true
 serde.workspace = true

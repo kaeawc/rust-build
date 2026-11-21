@@ -11,6 +11,13 @@ struct Cli {
     /// Log filter, e.g. `info`, `rb_server=debug` (also RUST_LOG).
     #[arg(long, global = true, env = "RUST_LOG", default_value = "info")]
     log: String,
+    /// Log format: `text` (human) or `json` (one object per line).
+    #[arg(long, global = true, env = "RB_LOG_FORMAT", default_value = "text")]
+    log_format: rb_telemetry::LogFormat,
+    /// Export traces over OTLP/HTTP to this collector (e.g. http://localhost:4318). Needs a build
+    /// with `--features otel`.
+    #[arg(long, global = true, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -39,23 +46,28 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_new(&cli.log).unwrap_or_else(|_| "info".into()))
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
-        .compact()
-        .init();
+    let telemetry = rb_telemetry::Config {
+        filter: cli.log.clone(),
+        format: cli.log_format,
+        otlp_endpoint: cli.otlp_endpoint.clone(),
+        service_name: "rb".into(),
+    };
 
-    // Synchronous commands skip building a runtime entirely.
-    match cli.command {
-        Command::Cert(a) => return cmd::cert::run(a),
-        Command::Token(c) => return cmd::token::run(c),
-        Command::Env(a) => return cmd::env::run(a),
-        _ => {}
+    // Synchronous commands skip building a runtime entirely (and never export traces).
+    if matches!(cli.command, Command::Cert(_) | Command::Token(_) | Command::Env(_)) {
+        let _guard = rb_telemetry::init(&rb_telemetry::Config { otlp_endpoint: None, ..telemetry })?;
+        return match cli.command {
+            Command::Cert(a) => cmd::cert::run(a),
+            Command::Token(c) => cmd::token::run(c),
+            Command::Env(a) => cmd::env::run(a),
+            _ => unreachable!("matched above"),
+        };
     }
 
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     rt.block_on(async move {
+        // Inside the runtime: the OTLP exporter sends spans on it. The guard flushes on exit.
+        let _guard = rb_telemetry::init(&telemetry)?;
         match cli.command {
             Command::Serve(a) => cmd::serve::run(a).await,
             Command::Get(a) => cmd::get::run(a).await,

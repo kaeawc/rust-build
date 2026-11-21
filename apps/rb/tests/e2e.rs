@@ -112,6 +112,17 @@ async fn plaintext_api_h1_and_h2c() {
     let probes: Vec<Value> = h1.get_json(&srv.url("http", "/api/admin/healthchecks")).await.expect("probes");
     assert!(probes.iter().all(|p| p["healthy"] == true), "{probes:?}");
 
+    // Prometheus exposition reflects the same requests, by matched route.
+    let _ = rb_client::ws::connect(&srv.url("ws", "/ws"), rb_tls::ClientOptions::default()).await.expect("ws");
+    let metrics = h1.get(&srv.url("http", "/metrics")).await.expect("metrics");
+    assert_eq!(metrics.status, 200);
+    assert!(metrics.headers.get("content-type").is_some_and(|v| v.as_bytes().starts_with(b"application/openmetrics-text")));
+    let text = metrics.text();
+    assert!(text.contains(r#"rb_http_requests_total{method="GET",route="/api/users",status="200"} 4"#), "{text}");
+    assert!(text.contains(r#"rb_http_requests_total{method="GET",route="/api/users",status="400"} 1"#), "{text}");
+    assert!(text.contains("rb_http_request_duration_seconds_bucket"), "{text}");
+    assert!(text.contains("rb_build_info"), "{text}");
+
     // Readiness drains before shutdown.
     assert_eq!(h1.get(&srv.url("http", "/readyz")).await.expect("ready").status, 200);
     srv.state.set_shutting_down();

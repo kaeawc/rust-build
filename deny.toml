@@ -3,7 +3,8 @@
 # The desktop workspace is not checked: Rune brings its own large, duplicated GPU tree.
 
 [graph]
-all-features = false
+# Feature-gated backends (otel, postgres, valkey, ...) must follow the policy too.
+all-features = true
 # Only platforms we build for; target-specific crates for others (e.g. UEFI's r-efi) are ignored.
 targets = [
     "x86_64-unknown-linux-gnu",
@@ -52,7 +53,6 @@ skip = [
     { crate = "base64@0.22", reason = "axum 0.8 uses 0.22; rcgen's pem uses 0.23" },
     { crate = "getrandom@0.2", reason = "ring 0.17 uses 0.2" },
     { crate = "getrandom@0.3", reason = "rand_core 0.9 (tungstenite via axum) uses 0.3" },
-    { crate = "windows-sys@0.52", reason = "Windows-only; errno (via tokio's signal-hook-registry) still on 0.52" },
     { crate = "syn@2", reason = "proc-macro ecosystem mid-migration to syn 3 (serde/clap on 3; tokio-macros, thiserror, tracing on 2)" },
 ]
 

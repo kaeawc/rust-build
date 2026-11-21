@@ -52,6 +52,8 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --locked --all-targets --profile ci -- -D warnings
+      # Optional features (OpenTelemetry, database backends) compile and lint too.
+      - run: cargo clippy --locked --all-targets --all-features --profile ci -- -D warnings
 
   # Dependency policy (deny.toml): one version per crate, no aws-lc/OpenSSL, RustSec advisories,
   # licenses, sources. Reads Cargo.lock only — no compilation.

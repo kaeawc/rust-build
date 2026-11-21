@@ -4,6 +4,7 @@ use crate::traffic::TrafficRecorder;
 use rb_core::clock::{SharedClock, System};
 use rb_core::idgen::{IdGen, Random};
 use rb_core::kv::Memory;
+use rb_telemetry::metrics::Metrics;
 use rb_tokens::Hmac256;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +23,8 @@ pub struct Config {
     pub request_timeout: Duration,
     /// Extra readiness probes on top of the built-in store and cache probes.
     pub probes: Vec<Arc<dyn Probe>>,
+    /// Prometheus registry served at `/metrics`; share it to add process-wide metrics.
+    pub metrics: Arc<Metrics>,
 }
 
 impl Default for Config {
@@ -36,6 +39,7 @@ impl Default for Config {
             probe_timeout: Duration::from_secs(2),
             request_timeout: Duration::from_secs(10),
             probes: Vec::new(),
+            metrics: Arc::new(Metrics::new("rb", env!("CARGO_PKG_VERSION"))),
         }
     }
 }
@@ -52,6 +56,7 @@ pub(crate) struct Inner {
     pub clock: SharedClock,
     pub ids: Arc<dyn IdGen>,
     pub probes: Vec<Arc<dyn Probe>>,
+    pub metrics: Arc<Metrics>,
     pub started: Instant,
     pub shutting_down: AtomicBool,
     pub health: std::sync::Mutex<Option<(Instant, bool)>>,
@@ -103,6 +108,7 @@ impl AppState {
             clock: cfg.clock,
             ids: cfg.ids,
             probes,
+            metrics: cfg.metrics,
             shutting_down: AtomicBool::new(false),
             health: std::sync::Mutex::new(None),
             cfg: Timeouts {
@@ -125,6 +131,10 @@ impl AppState {
 
     pub fn traffic(&self) -> &TrafficRecorder {
         &self.0.traffic
+    }
+
+    pub fn metrics(&self) -> &Arc<Metrics> {
+        &self.0.metrics
     }
 
     pub fn tokens(&self) -> &Hmac256 {

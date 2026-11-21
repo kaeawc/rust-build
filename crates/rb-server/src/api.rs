@@ -32,6 +32,7 @@ const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 /// - `POST /api/token`, `GET /api/me` HS256 bearer tokens
 /// - `GET /api/admin/traffic`, `GET /api/admin/healthchecks`
 /// - `/ws` WebSocket echo (HTTP/1.1 upgrade or HTTP/2 extended CONNECT)
+/// - `GET /metrics` Prometheus/OpenMetrics exposition
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/info", get(info))
@@ -48,12 +49,13 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/ws", any(ws))
+        .route("/metrics", get(metrics))
         .nest("/api", api)
         .fallback(|| async { ApiError::not_found() })
         .layer(
             ServiceBuilder::new()
                 .layer(SetRequestIdLayer::new(REQUEST_ID, ids))
-                .layer(TraceLayer::new_for_http())
+                .layer(TraceLayer::new_for_http().make_span_with(make_span))
                 .layer(PropagateRequestIdLayer::new(REQUEST_ID))
                 .layer(CatchPanicLayer::custom(|_| ApiError::internal("handler panicked").into_response()))
                 .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, timeout))
@@ -74,13 +76,31 @@ impl MakeRequestId for Ids {
     }
 }
 
+/// One span per request, carrying the request id and continuing the caller's trace (`traceparent`)
+/// when built with `otel`.
+fn make_span(req: &http::Request<axum::body::Body>) -> tracing::Span {
+    let request_id = req.headers().get(&REQUEST_ID).and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let span = tracing::info_span!("request", method = %req.method(), uri = %req.uri(), version = ?req.version(), request_id);
+    rb_telemetry::propagation::extract(&span, req.headers());
+    span
+}
+
 async fn track_traffic(State(s): State<AppState>, matched: Option<MatchedPath>, req: Request, next: Next) -> Response {
     let method = req.method().to_string();
     let path = matched.map_or_else(|| "(unmatched)".to_string(), |m| m.as_str().to_string());
     let start = s.0.clock.now();
+    s.0.metrics.http_in_flight.inc();
     let resp = next.run(req).await;
-    s.0.traffic.record(&method, &path, resp.status().as_u16(), s.0.clock.now().saturating_duration_since(start));
+    s.0.metrics.http_in_flight.dec();
+    let elapsed = s.0.clock.now().saturating_duration_since(start);
+    let status = resp.status().as_u16();
+    s.0.traffic.record(&method, &path, status, elapsed);
+    s.0.metrics.observe_http(&method, &path, status, elapsed);
     resp
+}
+
+async fn metrics(State(s): State<AppState>) -> Response {
+    ([(header::CONTENT_TYPE, rb_telemetry::metrics::CONTENT_TYPE)], s.metrics().render()).into_response()
 }
 
 async fn healthz(State(s): State<AppState>) -> Response {
@@ -192,14 +212,20 @@ async fn admin_healthchecks(State(s): State<AppState>) -> impl IntoResponse {
     Json(s.probe_all().await)
 }
 
-async fn ws(up: WebSocketUpgrade) -> Response {
-    up.on_upgrade(echo)
+async fn ws(State(s): State<AppState>, up: WebSocketUpgrade) -> Response {
+    let metrics = s.metrics().clone();
+    up.on_upgrade(move |socket| async move {
+        metrics.ws_connections.inc();
+        echo(socket, &metrics).await;
+        metrics.ws_connections.dec();
+    })
 }
 
-async fn echo(mut socket: WebSocket) {
+async fn echo(mut socket: WebSocket, metrics: &rb_telemetry::metrics::Metrics) {
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {
             Message::Text(_) | Message::Binary(_) => {
+                metrics.ws_messages.inc();
                 if socket.send(msg).await.is_err() {
                     break;
                 }

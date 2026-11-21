@@ -125,14 +125,16 @@ impl HttpClient {
         for (k, v) in headers {
             req = req.header(k, v);
         }
-        let req = req.body(Full::new(body.unwrap_or_default()))?;
+        let mut req = req.body(Full::new(body.unwrap_or_default()))?;
+        let span = tracing::info_span!("http_client", method = %req.method(), url = %req.uri());
+        span.in_scope(|| rb_telemetry::propagation::inject(req.headers_mut()));
         let fut = async {
             let resp = self.inner.request(req).await?;
             let (parts, body) = resp.into_parts();
             let body = body.collect().await?.to_bytes();
             Ok::<_, Error>(Response { status: parts.status, version: parts.version, headers: parts.headers, body })
         };
-        tokio::time::timeout(self.timeout, fut).await.map_err(|_| Error::Timeout(self.timeout))?
+        tokio::time::timeout(self.timeout, tracing::Instrument::instrument(fut, span)).await.map_err(|_| Error::Timeout(self.timeout))?
     }
 
     pub async fn get(&self, url: &str) -> Result<Response, Error> {
