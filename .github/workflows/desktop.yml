@@ -45,7 +45,7 @@ jobs:
       run:
         working-directory: desktop
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
@@ -57,7 +57,7 @@ jobs:
       # Headless layout + input tests, plus backend tests against an embedded server.
       - run: cargo test --locked --profile ci
       - run: cargo build --locked --release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: rb-desktop-macos
           path: desktop/target/release/rb-desktop
