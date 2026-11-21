@@ -1,0 +1,21 @@
+[package]
+name = "rb-tls"
+description = "rustls (ring) configs for servers, clients and tunnels; self-signed dev certificates."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+rcgen.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+thiserror.workspace = true
+webpki-roots.workspace = true

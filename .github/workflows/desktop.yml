@@ -1,0 +1,63 @@
+name: Desktop
+
+# The Rune app is its own workspace with a heavy GPU dependency tree, so it only builds when it
+# (or a crate it depends on) changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "crates/rb-client/**"
+      - "crates/rb-core/**"
+      - "crates/rb-server/**"
+      - "crates/rb-tls/**"
+      - "crates/rb-tokens/**"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "crates/**"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  # Cargo's git fetches of the Rune repo are much faster through the git CLI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  RUST_BACKTRACE: short
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+          shared-key: desktop-macos
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --locked --all-targets --profile ci -- -D warnings
+      # Headless layout + input tests, plus backend tests against an embedded server.
+      - run: cargo test --locked --profile ci
+      - run: cargo build --locked --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rb-desktop-macos
+          path: desktop/target/release/rb-desktop

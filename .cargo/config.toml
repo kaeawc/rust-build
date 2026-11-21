@@ -1,0 +1,21 @@
+# Linkers: macOS uses ld-prime (Xcode 15+) and x86_64 Linux uses rust-lld by default since Rust
+# 1.90 — both already fast, so nothing to set. Windows MSVC: use rustc's bundled rust-lld
+# instead of link.exe (zero extra installs, several times faster).
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
+[target.aarch64-pc-windows-msvc]
+linker = "rust-lld"
+
+[alias]
+# The inner loop: type-check everything (no codegen, no linking).
+c = "check --all-targets"
+# Lint like CI does.
+lint = "clippy --all-targets -- -D warnings"
+# Tests through nextest (one process per test, parallel across binaries).
+t = "nextest run"
+# Tests in a single crate without touching the rest.
+tc = "nextest run -p rb-core"
+
+[env]
+# Tests and tools that look at this get short backtraces without slowing the build.
+RUST_BACKTRACE = { value = "short", force = false }

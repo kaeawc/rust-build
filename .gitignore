@@ -1,0 +1,7 @@
+/target
+/desktop/target
+/certs
+.env
+junit.xml
+*.png
+!docs/**/*.png

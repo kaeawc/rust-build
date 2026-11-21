@@ -1,0 +1,63 @@
+[package]
+name = "rb-desktop"
+description = "Rune desktop control panel for rust-build: health, traffic, load tests, WebSocket ping, embedded server."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+# A workspace of its own: Rune is a ~170 MB git dependency with a GPU stack. Keeping it out of the
+# root workspace means `cargo check`/`test` at the root never fetch, resolve, or feature-unify it.
+[workspace]
+
+[dependencies]
+rb-client = { path = "../crates/rb-client" }
+rb-core = { path = "../crates/rb-core" }
+rb-server = { path = "../crates/rb-server" }
+rb-tls = { path = "../crates/rb-tls" }
+rune = { git = "https://github.com/anomalyco/rune", rev = "7a707454fbfb8d3fd200723c65778fb7b98fd31e" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "time", "sync", "signal"] }
+
+[features]
+# Live Rust editing through Rune's devserver (`scripts/rune-dev` in the Rune repo).
+hot = ["rune/hot"]
+
+# Rune doesn't propagate its patches; apps must repeat them at the same rev (Rune README,
+# "Depending on Rune"). Bump all of these together with `rune` above.
+[patch.crates-io]
+winit = { git = "https://github.com/anomalyco/rune", rev = "7a707454fbfb8d3fd200723c65778fb7b98fd31e" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "7a707454fbfb8d3fd200723c65778fb7b98fd31e" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "7a707454fbfb8d3fd200723c65778fb7b98fd31e" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "7a707454fbfb8d3fd200723c65778fb7b98fd31e" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "7a707454fbfb8d3fd200723c65778fb7b98fd31e" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "7a707454fbfb8d3fd200723c65778fb7b98fd31e" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.dev]
+debug = "line-tables-only"
+
+# Dependencies (Rune's renderer, text shaping, wgpu) build once and are cached; optimizing them
+# keeps a debug window smooth without slowing the edit→run loop of this crate.
+[profile.dev.package."*"]
+debug = false
+opt-level = 2
+
+[profile.release]
+codegen-units = 16
+incremental = true
+
+# Rune's hot-reload profile (used by its devserver when present).
+[profile.rune-hot]
+inherits = "dev"
+debug = 0
+incremental = true
+
+[profile.ci]
+inherits = "dev"
+debug = false
+incremental = false
