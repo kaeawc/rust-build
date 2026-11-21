@@ -8,6 +8,11 @@ Rust port of golang-build: API server, CLI clients, TLS tunnel, and a Rune deskt
 - New dependencies go in root `[workspace.dependencies]` with `default-features = false` and only
   the features used; crates reference them with `{ workspace = true }`. Never add a crate that
   pulls `aws-lc-rs`/`aws-lc-sys` — TLS stays on `ring` (`cargo tree -i aws-lc-rs` must fail).
+- One version of every crate (`deny.toml`, enforced by the CI `deny` job). A duplicate compiles
+  a crate and its subtree twice. If a bump would duplicate a crate a framework also uses (e.g.
+  `tokio-tungstenite`, which axum depends on), keep our version matched to the framework's and
+  bump both together when the framework moves; add a Dependabot `ignore` so it stops proposing
+  it. Only add a `skip` in `deny.toml` for duplicates we can't control, with a reason.
 - Time goes through `rb_core::clock::Clock`, sleeps in retry through `Sleeper`: tests use fakes,
   never real waits.
 - Keep integration tests in `apps/rb/tests/e2e.rs` (one binary). Prefer unit tests in-module.
@@ -23,6 +28,7 @@ cargo c                      # check --all-targets
 cargo t                      # nextest run (or: cargo test)
 cargo lint                   # clippy --all-targets -D warnings
 cargo fmt --all
+cargo deny check             # dependency policy (cargo binstall cargo-deny)
 cd desktop && cargo test     # Rune headless view tests
 ```
 

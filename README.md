@@ -71,6 +71,10 @@ What makes it fast, and why:
 - **`ring` everywhere, no aws-lc.** rustls, tokio-rustls and rcgen run on `ring` (default
   features off), so there's no `aws-lc-sys` CMake build in the graph. The HTTP client's connector
   does TCP + rustls itself instead of pulling in reqwest + hyper-rustls + a platform verifier.
+- **One version per crate.** `deny.toml` bans duplicate crate versions (each duplicate compiles a
+  crate and its subtree twice), aws-lc and OpenSSL; the CI `deny` job enforces it. Versions of
+  crates a framework also uses track the framework: `tokio-tungstenite` stays on the version axum
+  uses and moves when axum does.
 - **Minimal features.** axum, hyper, hyper-util, tokio, tower-http, clap: default features off,
   only what's used switched on.
 - **Profiles.** `dev`: `line-tables-only` debuginfo for our crates, none for deps (smaller

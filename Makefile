@@ -1,5 +1,5 @@
 # Fast paths for the inner loop. Everything is plain cargo underneath.
-.PHONY: check test lint fmt ci watch run serve serve-tls desktop desktop-test desktop-snap dist docker docker-dev tools
+.PHONY: check test lint fmt deny ci watch run serve serve-tls desktop desktop-test desktop-snap dist docker docker-dev tools
 
 check:            ## type-check everything (no codegen, no link): the inner loop
 	cargo check --all-targets
@@ -13,7 +13,10 @@ lint:
 fmt:
 	cargo fmt --all
 
-ci: fmt lint test ## what CI runs, locally
+deny:             ## dependency policy: duplicates, banned crates, advisories, licenses
+	cargo deny check
+
+ci: fmt lint deny test ## what CI runs, locally
 
 watch:            ## re-check on save (bacon); `bacon test`, `bacon clippy` for other jobs
 	bacon
@@ -44,4 +47,4 @@ docker-dev:       ## quick local image (release profile, incremental)
 
 tools:            ## optional dev tools, as prebuilt binaries
 	@command -v cargo-binstall >/dev/null || curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-	cargo binstall -y cargo-nextest bacon sccache
+	cargo binstall -y cargo-nextest bacon sccache cargo-deny

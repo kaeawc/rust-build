@@ -1,0 +1,70 @@
+# cargo-deny: dependency policy for the root workspace, enforced in CI (`deny` job).
+# Run locally: `cargo deny check` (install: `cargo binstall cargo-deny`).
+# The desktop workspace is not checked: Rune brings its own large, duplicated GPU tree.
+
+[graph]
+all-features = false
+# Only platforms we build for; target-specific crates for others (e.g. UEFI's r-efi) are ignored.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+[advisories]
+# RustSec advisories (vulnerable, unmaintained, unsound) fail the build; yanked versions too.
+yanked = "deny"
+ignore = []
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[bans]
+# One version of every crate. A second copy of a crate means compiling it (and usually its whole
+# subtree) twice, on every clean build and in CI. When a bump would duplicate a crate that a
+# framework dependency also uses, hold the bump until the framework moves.
+#
+# Example (the reason this rule exists): axum 0.8 uses tokio-tungstenite 0.29 internally. Our
+# client also uses tokio-tungstenite; bumping ours to 0.30 alone compiled two tungstenites plus
+# second copies of rand, rand_core, sha1, digest, block-buffer, crypto-common, cpufeatures and
+# getrandom. So tokio-tungstenite tracks axum's version, and Dependabot skips it (see
+# .github/dependabot.yml).
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+
+# Known duplicates we can't remove: they come from dependencies' own choices, not ours.
+# Each needs a reason; remove the entry as soon as upstream converges.
+skip = [
+    { crate = "base64@0.22", reason = "axum 0.8 uses 0.22; rcgen's pem uses 0.23" },
+    { crate = "getrandom@0.2", reason = "ring 0.17 uses 0.2" },
+    { crate = "getrandom@0.3", reason = "rand_core 0.9 (tungstenite via axum) uses 0.3" },
+    { crate = "windows-sys@0.52", reason = "Windows-only; errno (via tokio's signal-hook-registry) still on 0.52" },
+    { crate = "syn@2", reason = "proc-macro ecosystem mid-migration to syn 3 (serde/clap on 3; tokio-macros, thiserror, tracing on 2)" },
+]
+
+# TLS stays on ring: no aws-lc (CMake + large C build) and no OpenSSL.
+deny = [
+    { crate = "aws-lc-rs", reason = "TLS uses ring; aws-lc adds a CMake/C build" },
+    { crate = "aws-lc-sys", reason = "TLS uses ring; aws-lc adds a CMake/C build" },
+    { crate = "openssl-sys", reason = "TLS uses rustls + ring" },
+    { crate = "native-tls", reason = "TLS uses rustls + ring" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

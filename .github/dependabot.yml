@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: weekly
     ignore:
-      # Pinned to the version axum depends on; bump together with axum.
+      # Pinned to the version axum depends on; bump together with axum (see deny.toml [bans]).
       - dependency-name: tokio-tungstenite
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
