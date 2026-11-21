@@ -93,8 +93,8 @@ CI (`.github/workflows/ci.yml`): `fmt` (no compile, no cache) · `lint` (clippy,
 · `test` (nextest, JUnit) · `build` (release `rb` artifact), each with its own
 [rust-cache](https://github.com/Swatinem/rust-cache) key saved only from `main`, `--locked`,
 `CARGO_INCREMENTAL=0`, debuginfo-free `ci` profile, prebuilt tools via `taiki-e/install-action`,
-and superseded runs cancelled. The desktop workflow runs only when `desktop/` or a crate it uses
-changes.
+and superseded runs cancelled. The desktop workflow builds nightly on macOS, Linux and Windows, and only
+when something it depends on changed since the last successful nightly (or on demand).
 
 ## Mapping from golang-build
 

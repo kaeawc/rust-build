@@ -1,35 +1,20 @@
-name: Desktop
+name: Desktop (nightly)
 
-# The Rune app is its own workspace with a heavy GPU dependency tree, so it only builds when it
-# (or a crate it depends on) changes.
+# The Rune desktop app is its own workspace with a heavy GPU dependency tree. It builds nightly on
+# macOS, Linux and Windows — not per push — and only when main changed something it depends on
+# since the last successful nightly. Run it by hand with "Run workflow" (always builds).
 on:
-  push:
-    branches: [main]
-    paths:
-      - "desktop/**"
-      - "crates/rb-client/**"
-      - "crates/rb-core/**"
-      - "crates/rb-server/**"
-      - "crates/rb-tls/**"
-      - "crates/rb-tokens/**"
-      - "Cargo.toml"
-      - "rust-toolchain.toml"
-      - ".github/workflows/desktop.yml"
-  pull_request:
-    paths:
-      - "desktop/**"
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/desktop.yml"
+  schedule:
+    - cron: "17 7 * * *"
   workflow_dispatch:
 
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-nightly
   cancel-in-progress: true
 
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,23 +25,70 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
-  macos:
-    runs-on: macos-latest
-    timeout-minutes: 45
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          # The commit the last successful nightly built; empty if there is none.
+          last=$(gh api "repos/$REPO/actions/workflows/desktop.yml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty' || true)
+          paths="desktop crates Cargo.toml Cargo.lock rust-toolchain.toml .cargo .github/workflows/desktop.yml"
+          if [ "$EVENT" = workflow_dispatch ] || [ -z "$last" ] || ! git cat-file -e "$last^{commit}" 2>/dev/null; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$last" HEAD -- $paths; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the desktop app depends on changed since ${last:0:9}; skipping." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macos-aarch64
+            bin: rb-desktop
+          - os: ubuntu-latest
+            name: linux-x86_64
+            bin: rb-desktop
+          - os: windows-latest
+            name: windows-x86_64
+            bin: rb-desktop.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     defaults:
       run:
+        shell: bash
         working-directory: desktop
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Linux build dependencies (Rune README, "Linux")
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev libwayland-dev
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: desktop
-          shared-key: desktop-macos
+          shared-key: desktop-${{ matrix.name }}
           cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       # No --locked: root dependency bumps (Dependabot) change what the shared path crates need,
       # and desktop/Cargo.lock can't be updated by those PRs. Rune itself stays pinned by rev.
       - run: cargo clippy --all-targets --profile ci -- -D warnings
@@ -65,5 +97,6 @@ jobs:
       - run: cargo build --release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rb-desktop-macos
-          path: desktop/target/release/rb-desktop
+          name: rb-desktop-${{ matrix.name }}
+          path: desktop/target/release/${{ matrix.bin }}
+          retention-days: 14
