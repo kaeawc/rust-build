@@ -1,13 +1,27 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde_json::json;
+use serde::Serialize;
 
 /// The standard error envelope: `{"error": {"code": ..., "message": ...}}`.
 #[derive(Debug)]
 pub struct ApiError {
     pub status: StatusCode,
     pub code: &'static str,
+    pub message: String,
+}
+
+/// Wire form of [`ApiError`].
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct ErrorEnvelope {
+    pub error: ErrorDetail,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct ErrorDetail {
+    pub code: String,
     pub message: String,
 }
 
@@ -31,6 +45,7 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": { "code": self.code, "message": self.message } }))).into_response()
+        let body = ErrorEnvelope { error: ErrorDetail { code: self.code.to_string(), message: self.message } };
+        (self.status, Json(body)).into_response()
     }
 }

@@ -15,6 +15,7 @@ pub trait Probe: Send + Sync + 'static {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeResult {
     pub name: String,

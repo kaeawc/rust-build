@@ -175,6 +175,42 @@ async fn tls_negotiates_h2_by_alpn_and_falls_back_to_h1() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fallback_router_serves_unmatched_paths_but_api_keeps_json_404s() {
+    // What `rb serve --features web` mounts: here a stand-in for the embedded UI.
+    let state = AppState::new(Config::default());
+    let spa = axum::Router::new().fallback(|| async { ([(http::header::CONTENT_TYPE, "text/html")], "<html>spa</html>") });
+    let app = rb_server::router_with_fallback(state, spa);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let (stop, rx) = oneshot::channel::<()>();
+    let task = tokio::spawn(rb_server::serve(listener, app, ServeOptions::default(), async {
+        let _ = rx.await;
+    }));
+    let c = client(ClientOptions::default());
+
+    for path in ["/", "/users", "/admin/traffic?x=1"] {
+        let r = c.get(&format!("http://{addr}{path}")).await.expect("spa");
+        assert_eq!((r.status.as_u16(), &r.body[..]), (200, &b"<html>spa</html>"[..]), "{path}");
+        // The server's layers wrap the fallback too.
+        assert!(r.headers.contains_key("x-request-id"), "{path}");
+        assert_eq!(r.headers.get("x-frame-options").map(|v| v.as_bytes()), Some(&b"DENY"[..]));
+    }
+    for path in ["/api/nope", "/api/users/1/missing"] {
+        let r = c.get(&format!("http://{addr}{path}")).await.expect("api 404");
+        assert_eq!(r.status, 404, "{path}");
+        let v: Value = serde_json::from_slice(&r.body).expect("json envelope");
+        assert_eq!(v["error"]["code"], "not_found", "{path}");
+    }
+    let r = c.get(&format!("http://{addr}/healthz")).await.expect("healthz");
+    assert_eq!(r.status, 200);
+    let info: Value = c.get_json(&format!("http://{addr}/api/info")).await.expect("info");
+    assert_eq!(info["httpVersion"], "HTTP/1.1");
+
+    let _ = stop.send(());
+    let _ = task.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn websocket_echo_over_ws_and_wss() {
     let srv = Server::start(None).await;
     let mut ws = rb_client::ws::connect(&srv.url("ws", "/ws"), rb_tls::ClientOptions::default()).await.expect("ws");

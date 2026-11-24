@@ -29,6 +29,7 @@ pub enum Error {
 
 /// Registered claims. Embed with `#[serde(flatten)]` in your own claims type.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, optional_fields))]
 pub struct StandardClaims {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub: Option<String>,

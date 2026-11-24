@@ -15,6 +15,8 @@ edit → check → test loop, locally and in CI.
 | `crates/rb-server` | axum app + hyper-util serve loop: HTTP/1.1 and HTTP/2 (ALPN under TLS, h2c in plaintext), WebSockets (incl. RFC 8441 over h2), request ids, traffic stats, health/readiness probes, graceful drain. |
 | `crates/rb-client` | Pooled HTTP/1.1 + HTTP/2 client whose connector does TCP + rustls itself, WebSocket client (`ws://`/`wss://`), load-generation engine with live snapshots. |
 | `crates/rb-tunnel` | stunnel-style TLS tunnel: server terminates TLS → TCP upstream; client accepts TCP → TLS to the server. HTTP/2 multiplexing (one TLS connection, an extended-CONNECT stream per TCP connection) with fallback to 1:1, per-stream targets checked against an allowlist, SNI routing, idle timeouts/keepalives, mTLS in every mode, `rb_tunnel_*` metrics. |
+| `crates/rb-web` | Serves the web UI from inside the binary (feature `web`): precompressed `.br`/`.gz`, SHA-256 ETags, immutable hashed assets, SPA fallback, CSP. |
+| `web/` | The web UI: TypeScript SPA (bun, Vite 8, React 19, TanStack Router + Query, Tailwind 4, shadcn/ui on Radix). Types come from the Rust DTOs via ts-rs. |
 | `apps/rb` | The `rb` CLI: `serve`, `get`, `ws`, `loadgen`, `tunnel server|client`, `cert`, `token issue|verify`, `env`. |
 | `desktop/` | Rune desktop control panel (its own workspace): health + HTTP version, per-route traffic, 5 s load test, WebSocket ping, embedded server. |
 
@@ -57,6 +59,34 @@ Add `--client-ca ca.pem` on the server and `--client-cert/--client-key` on the c
 It applies to every mode and route. `--metrics-addr` serves `rb_tunnel_connections`,
 `_connections_active`, `_streams`, `_denied`, `_failures`, `_idle_closed` and `_bytes`.
 The server also accepts a classic HTTP/2 CONNECT whose authority is the target.
+
+### Web UI
+
+`web/` is a React SPA (dashboard, users, tokens, admin, WebSocket console) that `rb serve`
+embeds when built with `--features web` (included in `full`). It needs [bun](https://bun.sh)
+1.4.5. Nothing else in the build does.
+
+```bash
+make serve-web    # bun build → web/dist, then rb serve --features web on :8080
+make serve        # dev loop, terminal 1: rb on :8080
+make web-dev      # dev loop, terminal 2: Vite on :5173 (HMR), proxying /api, /healthz, /readyz, /ws
+make web-test     # lint (+ type-aware), typecheck, bun:test with the coverage gate, knip, build
+make web-e2e      # Playwright + axe against the real binary
+make types        # regenerate web/src/api/gen from the Rust DTOs (CI fails on drift)
+```
+
+- **Caching:** hashed `/assets/*` are `immutable`. `index.html` is `no-cache`, so a redeploy
+  shows on the next navigation.
+- **Status codes:** a missing asset is a 404, never HTML, and unknown `/api/*` paths keep the
+  JSON 404 envelope.
+- **CSP:** HTML is served with `default-src 'self'`. `style-src` allows `'unsafe-inline'`,
+  because Radix's scroll lock injects a `<style>` when a dialog opens. The e2e suite proves it
+  and fails if Radix stops needing it.
+- **Removing the UI:** delete `web/` and `crates/rb-web`. Then drop the `web` feature and the
+  `rb-web` line from `apps/rb/Cargo.toml` and the `#[cfg(feature = "web")]` lines in
+  `apps/rb/src/cmd/serve.rs`. Finally remove `.github/workflows/web.yml`, the `web*`/`types`
+  Makefile targets and `rb-web` in the root `Cargo.toml`. The `ts` features and
+  `cfg_attr(feature = "ts", …)` lines are inert; `rg 'feature = "ts"'` finds them.
 
 ### API
 

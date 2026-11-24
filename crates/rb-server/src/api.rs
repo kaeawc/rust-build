@@ -12,7 +12,6 @@ use axum::routing::{any, get, post};
 use rb_core::paginator::{self, Page};
 use rb_tokens::StandardClaims;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::net::SocketAddr;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -34,7 +33,21 @@ const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 /// - `GET /api/admin/traffic`, `GET /api/admin/healthchecks`
 /// - `/ws` WebSocket echo (HTTP/1.1 upgrade or HTTP/2 extended CONNECT)
 /// - `GET /metrics` Prometheus/OpenMetrics exposition
+///
+/// Anything else is a JSON 404.
 pub fn router(state: AppState) -> Router {
+    build(state, None)
+}
+
+/// [`router`], with `fallback` answering every path no route matches, except under `/api`,
+/// which keeps its JSON 404. The fallback runs inside the same layers (request ids, tracing,
+/// timeouts, compression, security headers). This is how `rb serve --features web` mounts the
+/// embedded web UI.
+pub fn router_with_fallback(state: AppState, fallback: Router) -> Router {
+    build(state, Some(fallback))
+}
+
+fn build(state: AppState, fallback: Option<Router>) -> Router {
     let api = Router::new()
         .route("/info", get(info))
         .route("/users", get(list_users).post(create_user))
@@ -42,30 +55,35 @@ pub fn router(state: AppState) -> Router {
         .route("/me", get(me))
         .route("/admin/traffic", get(admin_traffic))
         .route("/admin/healthchecks", get(admin_healthchecks))
-        .route_layer(middleware::from_fn_with_state(state.clone(), track_traffic));
+        .route_layer(middleware::from_fn_with_state(state.clone(), track_traffic))
+        // Unknown `/api/*` paths stay JSON 404s even when a fallback serves everything else.
+        .fallback(|| async { ApiError::not_found() });
 
     let ids = Ids(state.clone());
     let timeout = state.0.cfg.request_timeout;
-    Router::new()
+    let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/ws", any(ws))
         .route("/metrics", get(metrics))
-        .nest("/api", api)
-        .fallback(|| async { ApiError::not_found() })
-        .layer(
-            ServiceBuilder::new()
-                .layer(SetRequestIdLayer::new(REQUEST_ID, ids))
-                .layer(TraceLayer::new_for_http().make_span_with(make_span))
-                .layer(PropagateRequestIdLayer::new(REQUEST_ID))
-                .layer(CatchPanicLayer::custom(|_| ApiError::internal("handler panicked").into_response()))
-                .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, timeout))
-                .layer(CompressionLayer::new().gzip(true))
-                .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
-                .layer(SetResponseHeaderLayer::if_not_present(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY")))
-                .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"))),
-        )
-        .with_state(state)
+        .nest("/api", api);
+    let app = match fallback {
+        Some(f) => app.fallback_service(f),
+        None => app.fallback(|| async { ApiError::not_found() }),
+    };
+    app.layer(
+        ServiceBuilder::new()
+            .layer(SetRequestIdLayer::new(REQUEST_ID, ids))
+            .layer(TraceLayer::new_for_http().make_span_with(make_span))
+            .layer(PropagateRequestIdLayer::new(REQUEST_ID))
+            .layer(CatchPanicLayer::custom(|_| ApiError::internal("handler panicked").into_response()))
+            .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, timeout))
+            .layer(CompressionLayer::new().gzip(true))
+            .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
+            .layer(SetResponseHeaderLayer::if_not_present(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY")))
+            .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"))),
+    )
+    .with_state(state)
 }
 
 #[derive(Clone)]
@@ -114,32 +132,44 @@ pub fn metrics_router(metrics: std::sync::Arc<rb_telemetry::metrics::Metrics>) -
     Router::new().route("/metrics", get(move || async move { render_metrics(&metrics) })).fallback(|| async { ApiError::not_found() })
 }
 
+/// Body of `/healthz` and `/readyz` (`probes` only on `/readyz`).
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, optional_fields))]
+pub struct HealthStatus {
+    /// `ok`, `unhealthy` or `shutting_down`.
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probes: Option<Vec<crate::ProbeResult>>,
+}
+
 async fn healthz(State(s): State<AppState>) -> Response {
     let no_store = [(header::CACHE_CONTROL, "no-store")];
     if s.healthy_cached().await {
-        (no_store, Json(json!({"status": "ok"}))).into_response()
+        (no_store, Json(HealthStatus { status: "ok", probes: None })).into_response()
     } else {
-        (StatusCode::SERVICE_UNAVAILABLE, no_store, Json(json!({"status": "unhealthy"}))).into_response()
+        (StatusCode::SERVICE_UNAVAILABLE, no_store, Json(HealthStatus { status: "unhealthy", probes: None })).into_response()
     }
 }
 
 async fn readyz(State(s): State<AppState>) -> Response {
     if s.is_shutting_down() {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"status": "shutting_down"}))).into_response();
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(HealthStatus { status: "shutting_down", probes: None })).into_response();
     }
     let probes = s.probe_all().await;
     let ok = probes.iter().all(|p| p.healthy);
     let status = if ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
-    (status, Json(json!({"status": if ok { "ok" } else { "unhealthy" }, "probes": probes}))).into_response()
+    (status, Json(HealthStatus { status: if ok { "ok" } else { "unhealthy" }, probes: Some(probes) })).into_response()
 }
 
+/// Body of `/api/info`.
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
-struct Info {
-    http_version: String,
-    peer: Option<String>,
-    uptime_secs: u64,
-    version: &'static str,
+pub struct Info {
+    pub http_version: String,
+    pub peer: Option<String>,
+    pub uptime_secs: u64,
+    pub version: &'static str,
 }
 
 async fn info(State(s): State<AppState>, req: Request) -> Json<Info> {
@@ -198,14 +228,25 @@ async fn create_user(State(s): State<AppState>, Json(new): Json<NewUser>) -> Res
     Ok((StatusCode::CREATED, Json(user)))
 }
 
+/// Body of `POST /api/token`.
 #[derive(Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, optional_fields))]
 #[serde(rename_all = "camelCase")]
-struct TokenRequest {
-    sub: String,
-    ttl_secs: Option<u64>,
+pub struct TokenRequest {
+    pub sub: String,
+    pub ttl_secs: Option<u64>,
 }
 
-async fn issue_token(State(s): State<AppState>, Json(req): Json<TokenRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+/// Response of `POST /api/token`.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TokenResponse {
+    pub token: String,
+    pub expires_at: u64,
+}
+
+async fn issue_token(State(s): State<AppState>, Json(req): Json<TokenRequest>) -> Result<Json<TokenResponse>, ApiError> {
     if req.sub.is_empty() {
         return Err(ApiError::bad_request("sub is required"));
     }
@@ -214,7 +255,7 @@ async fn issue_token(State(s): State<AppState>, Json(req): Json<TokenRequest>) -
     let claims =
         StandardClaims { sub: Some(req.sub), iat: Some(now), exp: Some(exp), iss: Some("rust-build".into()), ..Default::default() };
     let token = s.tokens().sign(&claims).map_err(|e| ApiError::internal(e.to_string()))?;
-    Ok(Json(json!({"token": token, "expiresAt": exp})))
+    Ok(Json(TokenResponse { token, expires_at: exp }))
 }
 
 async fn me(State(s): State<AppState>, headers: HeaderMap) -> Result<Json<StandardClaims>, ApiError> {

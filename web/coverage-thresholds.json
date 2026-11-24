@@ -1,0 +1,10 @@
+{
+  "version": "1",
+  "thresholds": {
+    "lines": 70,
+    "functions": 70
+  },
+  "metadata": {
+    "description": "Minimum coverage percentages over src/ (excluding vendored shadcn components and generated files), enforced by scripts/check-coverage-thresholds.ts. Same numbers as typescript-build; bun's lcov has no branch data."
+  }
+}
