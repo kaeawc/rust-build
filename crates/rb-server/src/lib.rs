@@ -12,7 +12,7 @@ mod state;
 mod store;
 mod traffic;
 
-pub use api::router;
+pub use api::{metrics_router, router};
 pub use error::ApiError;
 pub use health::{Probe, ProbeFuture, ProbeResult};
 pub use serve::{ServeOptions, serve, shutdown_signal};

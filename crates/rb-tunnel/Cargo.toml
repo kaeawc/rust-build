@@ -1,6 +1,6 @@
 [package]
 name = "rb-tunnel"
-description = "TLS tunnels: wrap any TCP service in rustls (server side) or reach one through TLS (client side), with optional mTLS."
+description = "TLS tunnels: wrap any TCP service in rustls (server side) or reach one through TLS (client side), with optional mTLS, HTTP/2 multiplexing, dynamic targets and SNI routing."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,13 @@ doctest = false
 workspace = true
 
 [dependencies]
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rb-core.workspace = true
+rb-telemetry.workspace = true
 rb-tls.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true

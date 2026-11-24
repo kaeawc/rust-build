@@ -1684,6 +1684,13 @@ dependencies = [
 name = "rb-tunnel"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rb-core",
+ "rb-telemetry",
  "rb-tls",
  "tokio",
  "tokio-rustls",

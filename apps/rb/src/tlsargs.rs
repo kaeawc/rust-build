@@ -72,14 +72,20 @@ impl ServerTls {
             }
             _ => return Ok(None),
         };
-        let cfg = match &self.client_ca {
+        let cfg = self.config_for(identity, alpn)?;
+        Ok(Some(cfg))
+    }
+
+    /// A config for `identity` with this server's client-auth policy (`--client-ca`), so every
+    /// certificate a server presents enforces the same mTLS rule.
+    pub fn config_for(&self, identity: rb_tls::Identity, alpn: &[&[u8]]) -> anyhow::Result<std::sync::Arc<rb_tls::rustls::ServerConfig>> {
+        Ok(match &self.client_ca {
             Some(ca) => {
                 let pem = std::fs::read(ca).with_context(|| format!("reading {}", ca.display()))?;
                 let cas = rb_tls::certs_from_pem(&pem, &ca.display().to_string())?;
                 rb_tls::server_config_mtls(identity, &cas, alpn)?
             }
             None => rb_tls::server_config(identity, alpn)?,
-        };
-        Ok(Some(cfg))
+        })
     }
 }
