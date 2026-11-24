@@ -143,6 +143,51 @@ when something it depends on changed since the last successful nightly (or on de
 Not ported (yet): Postgres/Valkey backends, migrations, River jobs, the web SPA. The server's
 `UserStore` trait is the seam for a real database.
 
+## Releases
+
+Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`. The design is in
+`docs/research/release-pipeline.md`.
+
+```bash
+make release VERSION=0.2.0        # scripts/release/bump.sh: bump both versions, run checks, commit, tag
+git push --atomic origin main v0.2.0
+```
+
+- **Gates:** the tag must match `workspace.package.version` and `desktop/Cargo.toml`, the commit
+  must be on `main`, and the CI workflow must have passed on that SHA (it waits up to 20 minutes).
+  A `-` suffix (`v0.2.0-rc.1`) makes a prerelease: no `latest`, no Homebrew.
+- **CLI:** `rb` is built for 7 targets on native runners, with no caches and with
+  `--locked --profile dist --features full` (web UI included):
+  - Linux gnu and musl, x86_64 and aarch64
+  - macOS aarch64 and x86_64
+  - Windows MSVC (static CRT)
+
+  Each target ships an archive `rb-<ver>-<target>.tar.gz|zip` and a CycloneDX SBOM.
+- **Desktop app:** a macOS `.app` (ad-hoc signed), a Linux tar.gz and a Windows zip.
+- **Checks before publishing:** one sorted `SHA256SUMS`. Each archive is smoke-tested on a clean
+  runner of its own OS/arch (musl inside Alpine). The image is smoke-tested per arch.
+- **Publishing:** a draft release is uploaded, gets an `actions/attest` provenance attestation
+  over `SHA256SUMS`, is verified with `gh attestation verify`, and is then published. After that:
+  SBOM attestations, the multi-arch `ghcr.io/kaeawc/rust-build` image (BuildKit provenance + SBOM
+  and an attestation), and `Formula/rust-build.rb` in `kaeawc/homebrew-tap`.
+- **Dry runs:** "Run workflow" (`workflow_dispatch`), and any PR touching `release.yml`,
+  `scripts/release/` or `ci/Dockerfile`, run everything up to publishing. Nothing is pushed, and
+  the artifacts are kept for 14 days.
+
+**One-time setup before the first tag:**
+
+1. Settings → Environments → New environment `release`. Add a deployment branch/tag rule: tags
+   `v*`. Optionally add yourself as a required reviewer for a last check before anything goes
+   public.
+2. In that environment, add the secret **`HOMEBREW_TAP_TOKEN`**: a fine-grained personal access
+   token for `kaeawc/homebrew-tap` with **Contents: Read and write**. It is the only secret.
+   GHCR, the release and the attestations use the workflow's `GITHUB_TOKEN`. Without the secret,
+   only the `homebrew` job fails; the release itself still publishes.
+3. Optional repository variables: `RELEASE_DESKTOP=false` skips the desktop app,
+   `HOMEBREW_TAP=false` skips the tap.
+4. After the first publish, make the GHCR package public (Package settings → Change visibility).
+   Then update the tap's `formula-audit.yml`, which only audits `auto-mobile` today.
+
 ## Repository security
 
 - Only collaborators can open issues and pull requests (interaction limit; GitHub caps it at six

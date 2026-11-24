@@ -10,6 +10,8 @@
 //! `cargo run` opens the window; `cargo run -- --snap panel.png --scene demo` renders headless.
 
 #![forbid(unsafe_code)]
+// Release builds on Windows are GUI apps: no console window opens next to the app.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod backend;
 mod view;

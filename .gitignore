@@ -5,3 +5,5 @@
 junit.xml
 *.png
 !docs/**/*.png
+# scripts/release output
+/dist/
