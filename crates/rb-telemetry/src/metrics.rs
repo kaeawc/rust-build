@@ -59,6 +59,9 @@ pub struct Metrics {
     pub tunnel_active: Family<TunnelLabels, Gauge>,
     pub tunnel_failures: Family<TunnelLabels, Counter>,
     pub tunnel_bytes: Family<DirectionLabels, Counter>,
+    pub tunnel_streams: Family<TunnelLabels, Counter>,
+    pub tunnel_denied: Family<TunnelLabels, Counter>,
+    pub tunnel_idle_closed: Family<TunnelLabels, Counter>,
 }
 
 impl Metrics {
@@ -87,6 +90,12 @@ impl Metrics {
         root.register("tunnel_connections_active", "Tunnel connections open", tunnel_active.clone());
         root.register("tunnel_failures", "Tunnel connections that failed", tunnel_failures.clone());
         root.register("tunnel_bytes", "Bytes relayed through tunnels", tunnel_bytes.clone());
+        let tunnel_streams = Family::<TunnelLabels, Counter>::default();
+        let tunnel_denied = Family::<TunnelLabels, Counter>::default();
+        let tunnel_idle_closed = Family::<TunnelLabels, Counter>::default();
+        root.register("tunnel_streams", "Multiplexed tunnel streams opened (HTTP/2 mode)", tunnel_streams.clone());
+        root.register("tunnel_denied", "Tunnel streams refused by the target allowlist", tunnel_denied.clone());
+        root.register("tunnel_idle_closed", "Tunnel streams closed by the idle timeout", tunnel_idle_closed.clone());
 
         Metrics {
             registry: Mutex::new(root),
@@ -99,6 +108,9 @@ impl Metrics {
             tunnel_active,
             tunnel_failures,
             tunnel_bytes,
+            tunnel_streams,
+            tunnel_denied,
+            tunnel_idle_closed,
         }
     }
 

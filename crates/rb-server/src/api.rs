@@ -119,7 +119,17 @@ async fn track_traffic(State(s): State<AppState>, matched: Option<MatchedPath>, 
 }
 
 async fn metrics(State(s): State<AppState>) -> Response {
-    ([(header::CONTENT_TYPE, rb_telemetry::metrics::CONTENT_TYPE)], s.metrics().render()).into_response()
+    render_metrics(s.metrics())
+}
+
+fn render_metrics(m: &rb_telemetry::metrics::Metrics) -> Response {
+    ([(header::CONTENT_TYPE, rb_telemetry::metrics::CONTENT_TYPE)], m.render()).into_response()
+}
+
+/// A router that serves only `GET /metrics` from `metrics` (plus a JSON 404), for processes that
+/// aren't the API server, such as `rb tunnel --metrics-addr`.
+pub fn metrics_router(metrics: std::sync::Arc<rb_telemetry::metrics::Metrics>) -> Router {
+    Router::new().route("/metrics", get(move || async move { render_metrics(&metrics) })).fallback(|| async { ApiError::not_found() })
 }
 
 /// Body of `/healthz` and `/readyz` (`probes` only on `/readyz`).

@@ -14,7 +14,7 @@ edit → check → test loop, locally and in CI.
 | `crates/rb-tls` | rustls configs on the `ring` provider: server (optional mTLS), client (webpki roots / custom CA / insecure), self-signed dev certs. |
 | `crates/rb-server` | axum app + hyper-util serve loop: HTTP/1.1 and HTTP/2 (ALPN under TLS, h2c in plaintext), WebSockets (incl. RFC 8441 over h2), request ids, traffic stats, health/readiness probes, graceful drain. |
 | `crates/rb-client` | Pooled HTTP/1.1 + HTTP/2 client whose connector does TCP + rustls itself, WebSocket client (`ws://`/`wss://`), load-generation engine with live snapshots. |
-| `crates/rb-tunnel` | stunnel-style TLS tunnel: server terminates TLS → TCP upstream; client accepts TCP → TLS to the server; optional mTLS; byte/conn stats. |
+| `crates/rb-tunnel` | stunnel-style TLS tunnel: server terminates TLS → TCP upstream; client accepts TCP → TLS to the server. HTTP/2 multiplexing (one TLS connection, an extended-CONNECT stream per TCP connection) with fallback to 1:1, per-stream targets checked against an allowlist, SNI routing, idle timeouts/keepalives, mTLS in every mode, `rb_tunnel_*` metrics. |
 | `crates/rb-web` | Serves the web UI from inside the binary (feature `web`): precompressed `.br`/`.gz`, SHA-256 ETags, immutable hashed assets, SPA fallback, CSP. |
 | `web/` | The web UI: TypeScript SPA (bun, Vite 8, React 19, TanStack Router + Query, Tailwind 4, shadcn/ui on Radix). Types come from the Rust DTOs via ts-rs. |
 | `apps/rb` | The `rb` CLI: `serve`, `get`, `ws`, `loadgen`, `tunnel server|client`, `cert`, `token issue|verify`, `env`. |
@@ -34,6 +34,31 @@ cargo run -p rb -- tunnel client --listen 127.0.0.1:9000 --remote 127.0.0.1:9443
 cd desktop && cargo run                                   # desktop app (starts an embedded server)
 cd desktop && cargo run -- --snap panel.png --scene demo  # render it headless
 ```
+
+### Tunnel
+
+Each client connection is one TLS connection (raw mode) unless the client names a `--target`.
+Then one TLS + HTTP/2 connection carries every forwarded connection as its own stream (RFC 8441
+extended CONNECT, `:protocol rb-tunnel`, path `/tcp/{host}/{port}`). The server dials a target only
+if `--upstream`, the SNI route's upstream or an `--allow` rule permits it. CIDR rules are checked
+against the resolved addresses. A client whose server can't multiplex falls back to raw mode, and
+raw clients work against multiplexing servers.
+
+```bash
+# Server: default upstream, extra allowed targets, a second service by SNI with its own cert.
+rb tunnel server --listen :9443 --cert certs/cert.pem --key certs/key.pem \
+  --upstream 127.0.0.1:8080 --allow 10.0.0.0/8:5432 --allow cache.internal:6379-6380 \
+  --route admin.example=127.0.0.1:9090,cert=admin.pem,key=admin-key.pem \
+  --idle-timeout 10m --keepalive 30s --metrics-addr 127.0.0.1:9100
+# Client: several local ports over one multiplexed connection.
+rb tunnel client --remote tunnel.example:9443 --ca certs/cert.pem \
+  --listen 127.0.0.1:5432 --target 10.0.0.5:5432 --forward 127.0.0.1:6379=cache.internal:6379
+```
+
+Add `--client-ca ca.pem` on the server and `--client-cert/--client-key` on the client for mTLS.
+It applies to every mode and route. `--metrics-addr` serves `rb_tunnel_connections`,
+`_connections_active`, `_streams`, `_denied`, `_failures`, `_idle_closed` and `_bytes`.
+The server also accepts a classic HTTP/2 CONNECT whose authority is the target.
 
 ### Web UI
 

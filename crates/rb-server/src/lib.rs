@@ -12,7 +12,7 @@ mod state;
 mod store;
 mod traffic;
 
-pub use api::{HealthStatus, Info, TokenRequest, TokenResponse, router, router_with_fallback};
+pub use api::{HealthStatus, Info, TokenRequest, TokenResponse, metrics_router, router, router_with_fallback};
 pub use error::{ApiError, ErrorDetail, ErrorEnvelope};
 pub use health::{Probe, ProbeFuture, ProbeResult};
 pub use serve::{ServeOptions, serve, shutdown_signal};

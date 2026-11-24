@@ -47,7 +47,7 @@ After any change: `cargo c && cargo lint && cargo t`.
 - `crates/rb-tls` — rustls (ring) server/client configs, self-signed certs.
 - `crates/rb-server` — axum router (`api.rs`), serve loop (`serve.rs`), state/probes, traffic recorder, `UserStore`.
 - `crates/rb-client` — `HttpClient` (custom TCP+TLS connector, ALPN h2), `ws`, `loadgen`.
-- `crates/rb-tunnel` — TLS tunnel server/client.
+- `crates/rb-tunnel` — TLS tunnel server/client: raw 1:1 and HTTP/2-multiplexed modes (`server.rs`, `client.rs`), target allowlist (`allow.rs`), stream path codec (`target.rs`), relay + idle timeout (`io.rs`).
 - `apps/rb` — CLI; one module per subcommand under `src/cmd/`.
 - `crates/rb-web` — embeds `web/dist` (feature `web` on `apps/rb`); `rb_server::router_with_fallback` mounts it.
 - `web/` — TypeScript SPA (bun 1.4.5): `src/routes/` (TanStack file routes), `src/api/` (client behind
