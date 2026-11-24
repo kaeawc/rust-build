@@ -8,12 +8,14 @@ use std::sync::Mutex;
 pub use rb_core::cache::BoxFut;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct User {
     pub id: i64,
     pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct NewUser {
     pub name: String,
 }

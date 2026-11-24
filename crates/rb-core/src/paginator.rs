@@ -50,6 +50,7 @@ pub fn decode<T: DeserializeOwned>(cursor: &str) -> Result<T, CursorError> {
 
 /// Response envelope for list endpoints.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
     pub items: Vec<T>,

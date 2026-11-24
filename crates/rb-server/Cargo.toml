@@ -17,6 +17,8 @@ workspace = true
 otel = ["rb-telemetry/otel"]
 postgres = ["rb-db/postgres", "rb-jobs/postgres"]
 valkey = ["rb-db/valkey"]
+# TypeScript bindings for the web UI's API types (`make types`); never part of a normal build.
+ts = ["dep:ts-rs", "rb-core/ts", "rb-tokens/ts"]
 
 [dependencies]
 axum.workspace = true
@@ -37,3 +39,4 @@ tokio-rustls.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
+ts-rs = { workspace = true, optional = true }

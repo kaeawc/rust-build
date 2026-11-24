@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TrafficStat {
     pub method: String,

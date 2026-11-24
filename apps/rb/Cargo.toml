@@ -18,8 +18,10 @@ otel = ["rb-telemetry/otel", "rb-server/otel", "rb-client/otel"]
 postgres = ["rb-db/postgres", "rb-jobs/postgres", "rb-server/postgres"]
 # Valkey response cache (`--valkey-url`).
 valkey = ["rb-db/valkey", "rb-server/valkey"]
+# The web UI embedded in the binary, served by `rb serve` (build it first: `make web`).
+web = ["dep:rb-web"]
 # Everything (what releases and the Docker image ship).
-full = ["otel", "postgres", "valkey"]
+full = ["otel", "postgres", "valkey", "web"]
 
 [lints]
 workspace = true
@@ -39,7 +41,12 @@ rb-tls.workspace = true
 rb-tokens.workspace = true
 rb-telemetry.workspace = true
 rb-tunnel.workspace = true
+rb-web = { workspace = true, optional = true }
 ring.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+# The e2e suite mounts a stand-in fallback router (what `--features web` mounts).
+axum.workspace = true

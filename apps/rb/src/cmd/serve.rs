@@ -48,6 +48,9 @@ pub async fn run(a: Args) -> anyhow::Result<()> {
         jobs,
         ..Default::default()
     });
+    #[cfg(feature = "web")]
+    let app = rb_server::router_with_fallback(state.clone(), rb_web::router());
+    #[cfg(not(feature = "web"))]
     let app = rb_server::router(state.clone());
     let listener = tokio::net::TcpListener::bind(&a.addr).await?;
     let scheme = if tls.is_some() { "https" } else { "http" };
