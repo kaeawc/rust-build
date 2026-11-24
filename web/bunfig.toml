@@ -1,0 +1,11 @@
+[test]
+preload = ["./test/setup.ts"]
+coverageReporter = ["text", "lcov"]
+coverageDir = "./coverage"
+coverageSkipTestFiles = true
+# Playwright specs run under `bun run e2e`, not bun:test.
+pathIgnorePatterns = ["e2e/**"]
+
+[run]
+# Run package binaries (eslint, tsc, knip, vite) on Bun even when their shebang says `node`.
+bun = true

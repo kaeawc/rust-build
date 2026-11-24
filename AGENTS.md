@@ -17,6 +17,10 @@ Rust port of golang-build: API server, CLI clients, TLS tunnel, and a Rune deskt
   never real waits.
 - Keep integration tests in `apps/rb/tests/e2e.rs` (one binary). Prefer unit tests in-module.
 - Doctests are disabled; don't rely on them for coverage.
+- Web: schedule through `Timer` (`web/src/lib/timer.ts`), never bare `setTimeout`; pages take the
+  `ApiClient` interface, and tests use `test/fakes` instead of mocking libraries. After changing a
+  serialized DTO, run `make types` and commit `web/src/api/gen`. Add shadcn components with
+  `bunx shadcn add <name>` (the project is initialised with `-b radix`).
 - `desktop/` is a separate workspace. Bump the Rune `rev` and every `[patch.crates-io]` entry
   together. After changing root dependencies, run `cd desktop && cargo check` and commit
   `desktop/Cargo.lock`.
@@ -30,6 +34,8 @@ cargo lint                   # clippy --all-targets -D warnings
 cargo fmt --all
 cargo deny check             # dependency policy (cargo binstall cargo-deny)
 cd desktop && cargo test     # Rune headless view tests
+make web-test                # web: lint, types, unit tests + coverage gate, knip, build (bun)
+make web-e2e                 # web: Playwright + axe against rb serve --features web
 ```
 
 After any change: `cargo c && cargo lint && cargo t`.
@@ -43,4 +49,8 @@ After any change: `cargo c && cargo lint && cargo t`.
 - `crates/rb-client` — `HttpClient` (custom TCP+TLS connector, ALPN h2), `ws`, `loadgen`.
 - `crates/rb-tunnel` — TLS tunnel server/client.
 - `apps/rb` — CLI; one module per subcommand under `src/cmd/`.
+- `crates/rb-web` — embeds `web/dist` (feature `web` on `apps/rb`); `rb_server::router_with_fallback` mounts it.
+- `web/` — TypeScript SPA (bun 1.4.5): `src/routes/` (TanStack file routes), `src/api/` (client behind
+  an `ApiClient` interface; `gen/` is ts-rs output, never hand-edited), `src/components/ui/` (vendored
+  shadcn, `-b radix`), `test/` (bun:test + fakes), `e2e/` (Playwright + axe against `rb serve`).
 - `desktop/` — Rune app: `backend.rs` (network on a shared tokio runtime), `view.rs`, `main.rs` (state, actions, poll, tests).

@@ -970,6 +970,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1536,6 +1555,7 @@ name = "rb"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "bytes",
  "clap",
  "futures-util",
@@ -1549,6 +1569,7 @@ dependencies = [
  "rb-tls",
  "rb-tokens",
  "rb-tunnel",
+ "rb-web",
  "ring",
  "serde_json",
  "tokio",
@@ -1585,6 +1606,7 @@ dependencies = [
  "base64 0.23.1",
  "serde",
  "serde_json",
+ "ts-rs",
 ]
 
 [[package]]
@@ -1639,6 +1661,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "ts-rs",
 ]
 
 [[package]]
@@ -1678,6 +1701,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "ts-rs",
 ]
 
 [[package]]
@@ -1687,6 +1711,20 @@ dependencies = [
  "rb-tls",
  "tokio",
  "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
+name = "rb-web"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http",
+ "http-body-util",
+ "include_dir",
+ "ring",
+ "tokio",
+ "tower",
  "tracing",
 ]
 
@@ -2100,6 +2138,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "termcolor"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
+dependencies = [
+ "winapi-util",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2408,6 +2455,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "ts-rs"
+version = "12.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756050066659291d47a554a9f558125db17428b073c5ffce1daf5dcb0f7231d8"
+dependencies = [
+ "thiserror",
+ "ts-rs-macros",
+]
+
+[[package]]
+name = "ts-rs-macros"
+version = "12.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d90eea51bc7988ef9e674bf80a85ba6804739e535e9cab48e4bb34a8b652aa"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "termcolor",
+]
+
+[[package]]
 name = "tungstenite"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2638,6 +2707,15 @@ dependencies = [
  "objc2-system-configuration",
  "wasite",
  "web-sys",
+]
+
+[[package]]
+name = "winapi-util"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

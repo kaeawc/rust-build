@@ -1,0 +1,26 @@
+[package]
+name = "rb-web"
+description = "Serves the web UI (web/dist) from inside the binary: precompressed variants, ETags, immutable hashed assets, SPA fallback."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+axum.workspace = true
+http.workspace = true
+include_dir.workspace = true
+ring.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+tower.workspace = true
+http-body-util.workspace = true
