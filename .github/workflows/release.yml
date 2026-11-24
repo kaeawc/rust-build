@@ -1,0 +1,632 @@
+name: Release
+
+# A tag push (vX.Y.Z[-pre], made by scripts/release/bump.sh) builds, smoke-tests and publishes:
+# a GitHub release with attestations, a multi-arch GHCR image, and the Homebrew formula (stable
+# tags only). workflow_dispatch, and pull requests that touch the release machinery, run the same
+# build + package + smoke pipeline as a dry run: nothing is pushed, attested or published, and the
+# artifacts are kept for 14 days. Design: docs/research/release-pipeline.md.
+#
+# One-time setup before the first tag (see README "Releases"):
+#   - environment `release` (Settings → Environments), deployment rule: tags `v*`
+#   - secret HOMEBREW_TAP_TOKEN in that environment (fine-grained PAT, Contents: read/write on
+#     kaeawc/homebrew-tap). GHCR and attestations use GITHUB_TOKEN.
+#   - optional repo variables: RELEASE_DESKTOP=false (skip desktop), HOMEBREW_TAP=false
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/release/**"
+      - "ci/Dockerfile"
+      - ".dockerignore"
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a release; a newer PR push supersedes its dry run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: short
+  IMAGE: ghcr.io/kaeawc/rust-build
+  # Bump together with web/package.json "packageManager".
+  BUN_VERSION: 1.4.5
+
+# No Actions caches anywhere in this workflow: release builds start from scratch with --locked.
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read # gh run list: CI status of the tagged commit
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      label: ${{ steps.v.outputs.label }}
+      tag: ${{ steps.v.outputs.tag }}
+      sha: ${{ steps.v.outputs.sha }}
+      epoch: ${{ steps.v.outputs.epoch }}
+      publish: ${{ steps.v.outputs.publish }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      retention: ${{ steps.v.outputs.retention }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve and validate version
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')
+          desktop=$(python3 -c 'import tomllib; print(tomllib.load(open("desktop/Cargo.toml","rb"))["package"]["version"])')
+          if [[ "$desktop" != "$version" ]]; then
+            echo "::error::desktop/Cargo.toml version $desktop != workspace.package.version $version (run scripts/release/bump.sh)"
+            exit 1
+          fi
+          sha=$(git rev-parse HEAD)
+          if [[ "$EVENT" == "push" && "$REF_TYPE" == "tag" ]]; then
+            tag="$REF_NAME"
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "::error::tag must be vX.Y.Z or vX.Y.Z-<pre>, got $tag"; exit 1
+            fi
+            if [[ "${tag#v}" != "$version" ]]; then
+              echo "::error::tag $tag does not match workspace.package.version $version"; exit 1
+            fi
+            publish=true; label="$version"; retention=7
+          else
+            tag="v$version"; publish=false; retention=14
+            label="${version}-dev.$(date -u +%Y%m%d).${sha:0:7}"
+          fi
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          {
+            echo "version=$version"
+            echo "label=$label"
+            echo "tag=$tag"
+            echo "sha=$sha"
+            echo "epoch=$(git log -1 --format=%ct)"
+            echo "publish=$publish"
+            echo "prerelease=$prerelease"
+            echo "retention=$retention"
+          } >> "$GITHUB_OUTPUT"
+          echo "version $version, label $label, publish $publish, prerelease $prerelease" >> "$GITHUB_STEP_SUMMARY"
+      - name: Tagged commit is on main
+        if: steps.v.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD FETCH_HEAD || {
+            echo "::error::$(git rev-parse HEAD) is not on main"; exit 1; }
+      - name: CI passed on the tagged commit
+        if: steps.v.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.v.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # The tag usually lands with its commit (git push --atomic origin main vX.Y.Z), so CI may
+          # still be running: wait up to 20 minutes for it.
+          for _ in $(seq 1 60); do
+            result=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" \
+              --json status,conclusion \
+              --jq '[.[] | select(.status == "completed")] | .[0].conclusion // "pending"')
+            case "$result" in
+              success) echo "CI green on $SHA"; exit 0 ;;
+              pending) sleep 20 ;;
+              *) echo "::error::CI on $SHA concluded '$result'; re-run CI for that commit, then this job"; exit 1 ;;
+            esac
+          done
+          echo "::error::CI did not finish on $SHA within 20 minutes"; exit 1
+
+  # The web UI, built once and embedded by every rb build (--features full includes web).
+  web:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install bun
+        run: npm install --global "bun@${BUN_VERSION}" && bun --version
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  build-cli:
+    name: build rb (${{ matrix.target }})
+    needs: [verify, web]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, musl: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, musl: true }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15 }
+          - { target: x86_64-pc-windows-msvc, os: windows-2025 }
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      LABEL: ${{ needs.verify.outputs.label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup target add "$TARGET"
+      - name: Install musl-tools
+        if: matrix.musl
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends musl-tools
+      - name: Build
+        env:
+          # ring's C/asm for musl targets.
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          # Static CRT: no VC++ redistributable needed on the user's machine.
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: cargo build --locked --profile dist -p rb --features full --target "$TARGET"
+      - uses: taiki-e/install-action@25f51f6b1bf4e18876107cece836f4f77ac17c8c # v2.90.7
+        with:
+          tool: cargo-cyclonedx
+      - name: SBOM (CycloneDX, this target's dependency graph)
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --manifest-path apps/rb/Cargo.toml --format json --target "$TARGET" --features full --override-filename sbom -q
+          mkdir -p dist
+          cp apps/rb/sbom.json "dist/rb-${LABEL}-${TARGET}.cdx.json"
+      - name: Package
+        run: bash scripts/release/package-cli.sh "$LABEL" "$TARGET"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.verify.outputs.retention) }}
+
+  build-desktop:
+    name: build desktop (${{ matrix.target }})
+    needs: verify
+    if: vars.RELEASE_DESKTOP != 'false'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: x86_64-pc-windows-msvc, os: windows-2025 }
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      LABEL: ${{ needs.verify.outputs.label }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup target add "$TARGET"
+      - name: Install Rune's Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libxkbcommon-dev libwayland-dev
+      # --locked here (unlike desktop.yml): a stale desktop/Cargo.lock must fail the release.
+      - name: Build
+        working-directory: desktop
+        run: cargo build --locked --release --target "$TARGET"
+      - name: Package
+        run: bash scripts/release/package-desktop.sh "$LABEL" "$VERSION" "$TARGET"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.verify.outputs.retention) }}
+
+  # Funnel: one sorted SHA256SUMS over every file that will be released.
+  checksums:
+    needs: [verify, build-cli, build-desktop]
+    # build-desktop may be skipped (RELEASE_DESKTOP=false); a skipped need must not skip this.
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LABEL: ${{ needs.verify.outputs.label }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: cli-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-*
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- * | sort -k2 > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
+          cat SHA256SUMS
+      # The formula is rendered on every run, so a template or checksum mistake shows up in dry runs.
+      - name: Homebrew formula renders
+        env:
+          RENDER_ONLY: "1"
+          TAG: v${{ needs.verify.outputs.version }}
+        run: |
+          bash scripts/release/update-brew-formula.sh
+          ruby -c rust-build.rb
+          cat rust-build.rb >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.verify.outputs.retention) }}
+
+  smoke-cli:
+    name: smoke rb (${{ matrix.target }})
+    needs: [verify, checksums]
+    if: ${{ !cancelled() && needs.checksums.result == 'success' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, alpine: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, alpine: true }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+          - { target: x86_64-pc-windows-msvc, os: windows-2025 }
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      LABEL: ${{ needs.verify.outputs.label }}
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+      - name: Smoke (host)
+        if: ${{ !matrix.alpine }}
+        run: bash scripts/release/smoke-cli.sh dist "$LABEL" "$VERSION" "$TARGET"
+      - name: Smoke (Alpine, proves the musl binary is static)
+        if: matrix.alpine
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w -e LABEL -e VERSION -e TARGET \
+            alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f \
+            sh -c 'apk add --no-cache bash >/dev/null && bash scripts/release/smoke-cli.sh dist "$LABEL" "$VERSION" "$TARGET"'
+
+  smoke-desktop:
+    name: smoke desktop (${{ matrix.target }})
+    needs: [verify, checksums, build-desktop]
+    if: ${{ !cancelled() && needs.checksums.result == 'success' && needs.build-desktop.result == 'success' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    # Windows hosted-runner GPU/WARP launch isn't proven yet; flip to false once it is.
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-15, experimental: false }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, experimental: false }
+          - { target: x86_64-pc-windows-msvc, os: windows-2025, experimental: true }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+      - name: Install a display and software Vulkan
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends xvfb libxkbcommon-x11-0 libwayland-client0 mesa-vulkan-drivers
+      - name: Launch and wait for Rune's ready receipt
+        env:
+          TARGET: ${{ matrix.target }}
+          LABEL: ${{ needs.verify.outputs.label }}
+        run: bash scripts/release/smoke-desktop.sh dist "$LABEL" "$TARGET"
+
+  # Per-arch image: native build (no QEMU), push by digest only when publishing, smoke the image.
+  docker:
+    name: image (${{ matrix.arch }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, platform: linux/amd64, os: ubuntu-24.04 }
+          - { arch: arm64, platform: linux/arm64, os: ubuntu-24.04-arm }
+    env:
+      PUBLISH: ${{ needs.verify.outputs.publish }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      SHA: ${{ needs.verify.outputs.sha }}
+      SOURCE_DATE_EPOCH: ${{ needs.verify.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # docker-container driver: needed for attestations and push-by-digest.
+      - name: Set up buildx
+        run: docker buildx create --name rb --driver docker-container --bootstrap --use
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build
+        id: build
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          args=(--file ci/Dockerfile --platform "$PLATFORM"
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            --label "org.opencontainers.image.revision=${SHA}"
+            --label "org.opencontainers.image.version=${VERSION}"
+            --label "org.opencontainers.image.licenses=MIT")
+          if [[ "$PUBLISH" == "true" ]]; then
+            args+=(--provenance=mode=max --sbom=true --metadata-file "$RUNNER_TEMP/meta.json"
+              --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true,rewrite-timestamp=true")
+            docker buildx build "${args[@]}" .
+            digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/meta.json")
+            ref="${IMAGE}@${digest}"
+            docker pull "$ref"
+          else
+            docker buildx build "${args[@]}" --load --tag rb:smoke .
+            digest=""; ref="rb:smoke"
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Smoke
+        env:
+          REF: ${{ steps.build.outputs.ref }}
+        run: |
+          set -euo pipefail
+          got=$(docker run --rm --entrypoint /rb "$REF" --version)
+          [[ "$got" == "rb $VERSION" ]] || { echo "::error::image reports '$got'"; exit 1; }
+          user=$(docker image inspect "$REF" --format '{{.Config.User}}')
+          [[ -n "$user" && "$user" != "root" && "$user" != "0" ]] || { echo "::error::image runs as root"; exit 1; }
+          cid=$(docker run -d -p 127.0.0.1:18080:8080 "$REF")
+          trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null' EXIT
+          for _ in $(seq 1 50); do curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break; sleep 0.2; done
+          curl -fsS http://127.0.0.1:18080/healthz
+          curl -fsS http://127.0.0.1:18080/readyz
+          curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>' || { echo "::error::web UI not embedded"; exit 1; }
+      - name: Record digest
+        if: env.PUBLISH == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: mkdir -p "$RUNNER_TEMP/digests" && echo "$DIGEST" > "$RUNNER_TEMP/digests/$ARCH"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.PUBLISH == 'true'
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Draft → upload → attest → verify → publish. Re-runs are idempotent: an existing draft gets
+  # `upload --clobber`, an already-published release is left alone (GitHub releases are immutable).
+  release:
+    needs: [verify, checksums, smoke-cli, smoke-desktop, docker]
+    if: ${{ !cancelled() && !failure() && needs.verify.outputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.verify.outputs.tag }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+      - name: Build provenance for every released file
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Release notes
+        run: bash scripts/release/notes.sh "$TAG" > "$RUNNER_TEMP/notes.md"
+      - name: Draft, upload, verify, publish
+        run: |
+          set -euo pipefail
+          if is_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$is_draft" == "false" ]]; then echo "$TAG is already published"; exit 0; fi
+            gh release upload "$TAG" dist/* --clobber
+          else
+            args=(--draft --verify-tag --title "rust-build $TAG" --notes-file "$RUNNER_TEMP/notes.md")
+            [[ "$PRERELEASE" == "true" ]] && args+=(--prerelease)
+            gh release create "$TAG" "${args[@]}" dist/*
+          fi
+          gh attestation verify "dist/rb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" -R "$GH_REPO"
+          latest=--latest
+          [[ "$PRERELEASE" == "true" ]] && latest=--latest=false
+          gh release edit "$TAG" --draft=false "$latest"
+
+  attest-sbom:
+    name: SBOM attestation (${{ matrix.target }})
+    needs: [verify, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, ext: tar.gz }
+          - { target: aarch64-unknown-linux-gnu, ext: tar.gz }
+          - { target: x86_64-unknown-linux-musl, ext: tar.gz }
+          - { target: aarch64-unknown-linux-musl, ext: tar.gz }
+          - { target: aarch64-apple-darwin, ext: tar.gz }
+          - { target: x86_64-apple-darwin, ext: tar.gz }
+          - { target: x86_64-pc-windows-msvc, ext: zip }
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/rb-${{ needs.verify.outputs.version }}-${{ matrix.target }}.${{ matrix.ext }}
+          sbom-path: dist/rb-${{ needs.verify.outputs.version }}-${{ matrix.target }}.cdx.json
+
+  # Tags the per-arch digests as one index only after the GitHub release exists.
+  ghcr:
+    needs: [verify, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      SHA: ${{ needs.verify.outputs.sha }}
+      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Create and tag the multi-arch index
+        id: index
+        run: |
+          set -euo pipefail
+          tags=(-t "$IMAGE:$VERSION")
+          if [[ "$PRERELEASE" != "true" ]]; then tags+=(-t "$IMAGE:${VERSION%.*}" -t "$IMAGE:latest"); fi
+          sources=()
+          for f in digests/*; do sources+=("$IMAGE@$(cat "$f")"); done
+          docker buildx imagetools create "${tags[@]}" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "index:org.opencontainers.image.description=rust-build server (rb serve): HTTP/1.1 + HTTP/2, TLS, WebSockets, web UI" \
+            --annotation "index:org.opencontainers.image.version=${VERSION}" \
+            --annotation "index:org.opencontainers.image.revision=${SHA}" \
+            --annotation "index:org.opencontainers.image.licenses=MIT" \
+            "${sources[@]}"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false # storage records are org-only; this repo is user-owned
+      - run: gh attestation verify "oci://$IMAGE:$VERSION" -R "$GITHUB_REPOSITORY"
+
+  homebrew:
+    needs: [verify, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.verify.outputs.prerelease != 'true' && vars.HOMEBREW_TAP != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+      - name: Update kaeawc/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          REPO: ${{ github.repository }}
+          REQUIRE_TOKEN: "1"
+        run: bash scripts/release/update-brew-formula.sh

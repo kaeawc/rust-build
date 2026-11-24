@@ -1,5 +1,5 @@
 # Fast paths for the inner loop. Everything is plain cargo underneath.
-.PHONY: check test lint fmt deny ci watch run serve serve-tls desktop desktop-test desktop-snap dist docker docker-dev tools web web-dev web-test web-e2e serve-web types
+.PHONY: check test lint fmt deny ci watch run serve serve-tls desktop desktop-test desktop-snap dist docker docker-dev tools web web-dev web-test web-e2e serve-web types release
 
 check:            ## type-check everything (no codegen, no link): the inner loop
 	cargo check --all-targets
@@ -46,6 +46,10 @@ web-e2e: web      ## Playwright + axe against `rb serve --features web`
 types:            ## regenerate web/src/api/gen from the Rust DTOs (ts-rs); CI fails on drift
 	rm -rf web/src/api/gen
 	TS_RS_EXPORT_DIR=$(CURDIR)/web/src/api/gen TS_RS_LARGE_INT=number cargo test -q -p rb-server -p rb-core -p rb-tokens --features ts export_bindings
+
+release:          ## bump to VERSION, run the checks, commit and tag (push: git push --atomic origin main vVERSION)
+	@test -n "$(VERSION)" || { echo "usage: make release VERSION=x.y.z" >&2; exit 2; }
+	scripts/release/bump.sh $(VERSION)
 
 desktop:
 	cd desktop && cargo run
